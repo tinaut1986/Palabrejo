@@ -141,6 +141,14 @@ input::placeholder { color: var(--text-dim); }
 .btn-danger { border-color: #e74c3c; color: #e74c3c; }
 .btn-danger:hover { background: #e74c3c; color: white; }
 
+/* Botones sueltos de un modal: mismo ancho y separacion entre ellos, para que
+   no queden pegados ni con anchos distintos segun el texto */
+.modal > .btn-primary,
+.modal > .btn-secondary {
+    width: 100%;
+    margin-top: 12px;
+}
+
 .auth-buttons {
     display: flex;
     gap: 8px;
@@ -332,10 +340,17 @@ input::placeholder { color: var(--text-dim); }
 .player-item .player-name { font-weight: 600; }
 .player-item .player-host { color: var(--yellow); font-size: 0.8rem; }
 
+#host-controls {
+    margin-top: 20px;
+}
 .host-label {
     color: var(--text-dim);
     font-size: 0.8rem;
     margin-bottom: 8px;
+}
+/* El boton de salir se separa mas: es la accion destructiva del grupo */
+#leave-room-btn {
+    margin-top: 20px;
 }
 
 /* ==========================================================
