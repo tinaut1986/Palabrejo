@@ -71,4 +71,4 @@ Ajustable por el anfitrión al crear la sala: 2–12 jugadores, 1–15 rondas y
 
 ## Licencia
 
-ISC
+MIT — ver [LICENSE](LICENSE).
