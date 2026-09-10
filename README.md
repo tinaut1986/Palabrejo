@@ -77,6 +77,25 @@ El secreto de firma se genera al primer arranque y se guarda en `app_settings`,
 de modo que las sesiones abiertas siguen valiendo tras reconstruir el
 contenedor. Se puede fijar por entorno con `SESSION_SECRET`.
 
+El token incluye un `token_version` que se contrasta con la base de datos, así
+que las sesiones son revocables aunque la firma sea válida: al cambiar una
+contraseña se incrementa y las sesiones abiertas de ese usuario mueren.
+
+### Contraseña olvidada
+
+No hay recuperación automática (el juego no pide email a nadie). La restablece
+el administrador desde el servidor:
+
+```bash
+docker exec -it palabrero_server node scripts/reset-password.js --list
+docker exec -it palabrero_server node scripts/reset-password.js <usuario>
+docker exec -it palabrero_server node scripts/reset-password.js <usuario> --random
+```
+
+Sin `--random` pide la contraseña por teclado, sin mostrarla. Con `--random`
+genera una legible y la imprime, para dictarla. En ambos casos las sesiones
+abiertas del usuario quedan invalidadas.
+
 ## Configuración de sala
 
 Ajustable por el anfitrión al crear la sala: 2–12 jugadores, 1–15 rondas y

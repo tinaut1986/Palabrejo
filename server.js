@@ -150,14 +150,16 @@ async function loadSessionSecret() {
 
 const b64url = buf => Buffer.from(buf).toString('base64url');
 
-function signSession(userId) {
-    const payload = `${userId}.${Date.now() + SESSION_TTL_MS}`;
+function signSession(userId, tokenVersion) {
+    const payload = `${userId}.${tokenVersion}.${Date.now() + SESSION_TTL_MS}`;
     const mac = crypto.createHmac('sha256', sessionSecret).update(payload).digest();
     return `${b64url(payload)}.${b64url(mac)}`;
 }
 
-// Devuelve el userId si el token es autentico y no ha caducado; null si no.
-function verifySession(token) {
+// Comprueba firma y caducidad. Devuelve { userId, tokenVersion } o null.
+// La version se contrasta despues contra la base de datos: un token firmado
+// sigue siendo revocable incrementando users.token_version.
+function parseSession(token) {
     if (typeof token !== 'string') return null;
     const parts = token.split('.');
     if (parts.length !== 2) return null;
@@ -172,12 +174,31 @@ function verifySession(token) {
     if (mac.length !== expected.length) return null;
     if (!crypto.timingSafeEqual(mac, expected)) return null;
 
-    const [rawId, rawExp] = payload.split('.');
+    const [rawId, rawVersion, rawExp] = payload.split('.');
     const userId = parseInt(rawId, 10);
+    const tokenVersion = parseInt(rawVersion, 10);
     const expiresAt = parseInt(rawExp, 10);
-    if (!Number.isInteger(userId) || !Number.isInteger(expiresAt)) return null;
+    if (!Number.isInteger(userId) || !Number.isInteger(tokenVersion) || !Number.isInteger(expiresAt)) return null;
     if (Date.now() >= expiresAt) return null;
-    return userId;
+    return { userId, tokenVersion };
+}
+
+// Valida el token de punta a punta: firma, caducidad y que la version siga
+// siendo la vigente. Devuelve { userId, username } o null.
+async function verifySession(token) {
+    const parsed = parseSession(token);
+    if (!parsed) return null;
+    try {
+        const [rows] = await dbPool.query(
+            'SELECT username, token_version FROM users WHERE id = ?', [parsed.userId]
+        );
+        if (rows.length === 0) return null;
+        if (rows[0].token_version !== parsed.tokenVersion) return null;
+        return { userId: parsed.userId, username: rows[0].username };
+    } catch (error) {
+        console.error("Session verify error:", error);
+        return null;
+    }
 }
 
 // --- MIGRATION LOGIC ---
@@ -265,7 +286,7 @@ app.post('/api/register', async (req, res) => {
         res.status(201).json({
             message: 'Registro exitoso.',
             username,
-            token: signSession(result.insertId)
+            token: signSession(result.insertId, 0)
         });
     } catch (error) {
         console.error("Register error:", error);
@@ -280,7 +301,7 @@ app.post('/api/login', async (req, res) => {
     }
 
     try {
-        const [rows] = await dbPool.query('SELECT id, username, password_hash FROM users WHERE username = ?', [username]);
+        const [rows] = await dbPool.query('SELECT id, username, password_hash, token_version FROM users WHERE username = ?', [username]);
         if (rows.length === 0) {
             return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
         }
@@ -294,7 +315,7 @@ app.post('/api/login', async (req, res) => {
         res.json({
             message: 'Login exitoso.',
             username: user.username,
-            token: signSession(user.id)
+            token: signSession(user.id, user.token_version)
         });
     } catch (error) {
         console.error("Login error:", error);
@@ -304,16 +325,9 @@ app.post('/api/login', async (req, res) => {
 
 // Revalida el token que el cliente tiene guardado al arrancar
 app.post('/api/session', async (req, res) => {
-    const userId = verifySession(req.body?.token);
-    if (!userId) return res.status(401).json({ error: 'Sesión no válida o caducada.' });
-    try {
-        const [rows] = await dbPool.query('SELECT username FROM users WHERE id = ?', [userId]);
-        if (rows.length === 0) return res.status(401).json({ error: 'Sesión no válida o caducada.' });
-        res.json({ username: rows[0].username });
-    } catch (error) {
-        console.error("Session error:", error);
-        res.status(500).json({ error: 'Error del servidor.' });
-    }
+    const session = await verifySession(req.body?.token);
+    if (!session) return res.status(401).json({ error: 'Sesión no válida o caducada.' });
+    res.json({ username: session.username });
 });
 
 app.get('/api/profile/:username', async (req, res) => {
@@ -507,16 +521,9 @@ function broadcastRoomState(roomCode) {
 // el nombre de otro.
 async function resolveIdentity(sessionToken) {
     if (!sessionToken) return { userId: null, username: null, invalid: false };
-    const userId = verifySession(sessionToken);
-    if (!userId) return { userId: null, username: null, invalid: true };
-    try {
-        const [rows] = await dbPool.query('SELECT username FROM users WHERE id = ?', [userId]);
-        if (rows.length === 0) return { userId: null, username: null, invalid: true };
-        return { userId, username: rows[0].username, invalid: false };
-    } catch (error) {
-        console.error("Identity error:", error);
-        return { userId: null, username: null, invalid: true };
-    }
+    const session = await verifySession(sessionToken);
+    if (!session) return { userId: null, username: null, invalid: true };
+    return { userId: session.userId, username: session.username, invalid: false };
 }
 
 // Evento propio (no un 'error' generico) para que el cliente sepa que debe
