@@ -1,0 +1,23 @@
+# Node.js
+/node_modules
+npm-debug.log
+.env
+
+# Logs
+logs
+*.log
+
+# Configuration file with sensitive data
+config.js
+
+# Word data files (regenerable via scripts/import_rae.py --download)
+scripts/allwords_rae.txt
+scripts/words_clean.txt
+scripts/words_raw.txt
+scripts/words_ref.json
+scripts/__pycache__/
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/

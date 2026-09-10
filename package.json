@@ -1,0 +1,19 @@
+{
+  "name": "palabrero",
+  "version": "1.0.0",
+  "description": "Juego multijugador de formación de palabras en español",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.1.0",
+    "mysql2": "^3.14.3",
+    "socket.io": "^4.8.1",
+    "bcryptjs": "^2.4.3"
+  }
+}

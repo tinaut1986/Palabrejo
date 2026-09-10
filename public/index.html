@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+    <title>Palabrero</title>
+    <link rel="icon" type="image/svg+xml" href="images/icon.svg">
+    <link rel="manifest" href="manifest.webmanifest">
+    <meta name="theme-color" content="#0f0f1a">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="images/icon-180.png">
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- SETUP VIEW -->
+    <div id="setup-view" class="view active">
+        <div class="modal">
+            <div class="game-icon-container">
+                <img src="images/icon.svg" alt="Palabrero">
+            </div>
+            <h1 class="logo-font">Palabrero</h1>
+            <p class="subtitle">Forma palabras con las letras que salgan.</p>
+
+            <div id="setup-guest-mode">
+                <input type="text" id="player-name-input" placeholder="Tu nombre" maxlength="20">
+                <button id="play-guest-btn" class="btn-primary">Jugar como invitado</button>
+                <div class="separator">o</div>
+                <button id="show-auth-btn" class="btn-secondary">Registrarse / Iniciar sesión</button>
+            </div>
+
+            <div id="setup-auth-mode" class="hidden">
+                <input type="text" id="auth-username" placeholder="Nombre de usuario" maxlength="20">
+                <input type="password" id="auth-password" placeholder="Contraseña" minlength="4">
+                <div class="auth-buttons">
+                    <button id="login-btn" class="btn-primary">Iniciar sesión</button>
+                    <button id="register-btn" class="btn-secondary">Registrarse</button>
+                </div>
+                <button id="back-guest-btn" class="btn-link">Volver</button>
+            </div>
+
+            <span id="setup-error" class="error-message"></span>
+        </div>
+    </div>
+
+    <!-- LOBBY VIEW -->
+    <div id="lobby-view" class="view">
+        <div class="modal">
+            <h2>Lobby</h2>
+            <p class="subtitle">Únete a una sala o crea una nueva.</p>
+
+            <div class="user-badge" id="user-badge"></div>
+
+            <div class="room-actions">
+                <div class="join-room-container">
+                    <input type="text" id="room-code-input" placeholder="Código" maxlength="4" style="text-transform: uppercase;">
+                    <button id="join-room-btn" class="btn-secondary">Unirse</button>
+                </div>
+                <button id="browse-rooms-btn" class="btn-secondary">Buscar Salas</button>
+            </div>
+
+            <div class="separator">o</div>
+
+            <div class="create-room-options">
+                <label class="switch-label">
+                    <span class="label-text">Privada</span>
+                    <label class="switch">
+                        <input type="checkbox" id="is-public-switch" checked>
+                        <span class="slider round"></span>
+                    </label>
+                    <span class="label-text bold">Pública</span>
+                </label>
+            </div>
+
+            <div class="room-config" id="room-config">
+                <div class="config-row">
+                    <label>Jugadores máx:</label>
+                    <div class="stepper">
+                        <button class="stepper-btn" data-target="max-players" data-dir="-1">-</button>
+                        <span id="max-players">8</span>
+                        <button class="stepper-btn" data-target="max-players" data-dir="1">+</button>
+                    </div>
+                </div>
+                <div class="config-row">
+                    <label>Rondas:</label>
+                    <div class="stepper">
+                        <button class="stepper-btn" data-target="total-rounds" data-dir="-1">-</button>
+                        <span id="total-rounds">5</span>
+                        <button class="stepper-btn" data-target="total-rounds" data-dir="1">+</button>
+                    </div>
+                </div>
+                <div class="config-row">
+                    <label>Segundos/ronda:</label>
+                    <div class="stepper">
+                        <button class="stepper-btn" data-target="round-time" data-dir="-1">-</button>
+                        <span id="round-time">90</span>
+                        <button class="stepper-btn" data-target="round-time" data-dir="1">+</button>
+                    </div>
+                </div>
+            </div>
+
+            <button id="create-room-btn" class="btn-primary">Crear Sala</button>
+            <span id="lobby-error" class="error-message"></span>
+
+            <div class="lobby-footer">
+                <button id="view-profile-btn" class="btn-link">Mi perfil</button>
+                <button id="logout-btn" class="btn-link">Salir</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ROOM BROWSER VIEW -->
+    <div id="room-browser-view" class="view">
+        <div class="modal">
+            <h2>Salas Públicas</h2>
+            <div id="public-rooms-list" class="rooms-list">
+                <p class="empty-state">No hay salas públicas disponibles.</p>
+            </div>
+            <button id="back-to-lobby-btn" class="btn-secondary">Volver al Lobby</button>
+        </div>
+    </div>
+
+    <!-- WAITING ROOM VIEW -->
+    <div id="waiting-room-view" class="view">
+        <div class="modal">
+            <h2>Sala: <span id="room-code-display" class="room-code"></span></h2>
+            <p class="subtitle">Comparte el código o escanea el QR para unirse.</p>
+
+            <div id="qr-container" class="qr-container">
+                <canvas id="qr-canvas"></canvas>
+            </div>
+
+            <div id="waiting-players" class="players-list"></div>
+
+            <div id="host-controls" class="hidden">
+                <p class="host-label">Solo el host puede iniciar</p>
+                <p id="solo-hint" class="host-label" style="display:none;color:var(--accent, #7c5cff);">Puedes empezar en solitario</p>
+                <button id="start-game-btn" class="btn-primary">Empezar Partida</button>
+            </div>
+
+            <button id="leave-room-btn" class="btn-secondary danger">Salir de la sala</button>
+        </div>
+    </div>
+
+    <!-- GAME VIEW -->
+    <div id="game-view" class="view">
+        <header class="game-topbar">
+            <div class="topbar-row">
+                <span id="round-display" class="round-pill">Ronda 1/5</span>
+                <span id="timer-display" class="timer">90s</span>
+            </div>
+            <div class="score-pills">
+                <div class="score-pill round">
+                    <span class="pill-label">Ronda</span>
+                    <span id="round-score" class="pill-value">0</span>
+                </div>
+                <div class="score-pill total">
+                    <span class="pill-label">Total</span>
+                    <span id="total-score" class="pill-value">0</span>
+                </div>
+                <div class="score-pill">
+                    <span class="pill-label">Puesto</span>
+                    <span id="rank-display" class="pill-value">-</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="game-scroll">
+            <section id="my-words" class="panel">
+                <h3>Mis palabras <span id="my-words-count" class="count-badge">0</span></h3>
+                <div id="my-words-list" class="words-chips"></div>
+            </section>
+
+            <section id="players-scores" class="panel">
+                <h3>Puntuaciones</h3>
+                <div id="scores-list"></div>
+            </section>
+        </div>
+
+        <div id="word-feedback" class="feedback hidden"></div>
+
+        <div class="bottom-dock">
+            <div id="built-word" class="built-word">
+                <span class="placeholder">Pulsa las letras para formar una palabra</span>
+            </div>
+            <div id="letters-display" class="letters-container"></div>
+            <div class="builder-actions">
+                <button type="button" id="backspace-btn" class="btn-secondary builder-btn" title="Borrar letra (Retroceso)">⌫</button>
+                <button type="button" id="clear-btn" class="btn-secondary builder-btn" title="Limpiar (Esc)">✕</button>
+                <button type="button" id="submit-built-btn" class="btn-primary">Enviar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ROUND RESULTS VIEW -->
+    <div id="round-results-view" class="view">
+        <div class="modal">
+            <h2 id="round-results-title">Resultados de la ronda</h2>
+            <div id="round-results-body" class="results-body"></div>
+            <p id="round-results-next" class="subtitle">Siguiente ronda en 5 segundos...</p>
+        </div>
+    </div>
+
+    <!-- GAME OVER VIEW -->
+    <div id="game-over-view" class="view">
+        <div class="modal">
+            <h2 id="game-over-title">Partida terminada</h2>
+            <div id="game-over-body" class="results-body"></div>
+            <button id="back-to-lobby-final" class="btn-primary">Volver al Lobby</button>
+        </div>
+    </div>
+
+    <!-- PROFILE VIEW -->
+    <div id="profile-view" class="view">
+        <div class="modal">
+            <h2>Mi Perfil</h2>
+            <div id="profile-body" class="profile-body"></div>
+            <button id="back-from-profile-btn" class="btn-secondary">Volver</button>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
