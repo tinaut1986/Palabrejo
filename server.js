@@ -330,6 +330,14 @@ app.post('/api/session', async (req, res) => {
     res.json({ username: session.username });
 });
 
+// Los nombres de cuentas registradas estan reservados para invitados.
+// Se consulta al entrar como invitado, para avisar en el momento oportuno.
+app.get('/api/name-available/:name', async (req, res) => {
+    const name = String(req.params.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Nombre requerido.' });
+    res.json({ available: !(await isNameRegistered(name)) });
+});
+
 app.get('/api/profile/:username', async (req, res) => {
     try {
         const [rows] = await dbPool.query(`

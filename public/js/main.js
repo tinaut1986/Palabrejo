@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let nextTimer = null;
     let roundScore = 0; // puntos de la ronda en curso (mío)
     let lastQrUrl = null; // ultimo QR pintado, para no regenerarlo sin motivo
+    let pendingRoom = false; // esperando que el servidor confirme sala creada/unida
 
     // --- ELEMENTS ---
     const $ = id => document.getElementById(id);
@@ -19,6 +20,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     function showView(viewId) {
         views.forEach(v => $(v).classList.remove('active'));
         $(viewId).classList.add('active');
+    }
+
+    // Entrar en una sala es una ida y vuelta con el servidor: hasta que
+    // confirma no se cambia de vista, para no plantar al jugador en una sala
+    // en espera vacia si la peticion se rechaza.
+    function setPendingRoom(pending) {
+        pendingRoom = pending;
+        $('create-room-btn').disabled = pending;
+        $('join-room-btn').disabled = pending;
     }
 
     function showError(elementId, msg) {
@@ -169,6 +179,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!identity) return false;
 
         if (identity.type === 'guest') {
+            // El nombre pudo registrarse como cuenta despues de guardarse aqui
+            try {
+                const res = await fetch(`/api/name-available/${encodeURIComponent(identity.name)}`);
+                if ((await res.json()).available === false) {
+                    clearIdentity();
+                    $('player-name-input').value = identity.name;
+                    showError('setup-error', `"${identity.name}" ya es una cuenta registrada. Inicia sesión o usa otro nombre.`);
+                    return false;
+                }
+            } catch (e) { /* sin red, se deja pasar: el servidor avisara */ }
+
             currentUser = null;
             guestName = identity.name;
             $('player-name-input').value = identity.name;
@@ -228,7 +249,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             // justo tras recargar quedaba un token de reanudacion caducado.
             clearResume();
             resumeToken = null;
-            if (currentRoom) {
+            // Si esperabamos entrar en una sala, la entrada se ha ido al garete
+            if (pendingRoom || currentRoom) {
+                setPendingRoom(false);
                 currentRoom = null;
                 stopTimer();
                 stopNextTimer();
@@ -252,6 +275,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         socket.on('roomStateUpdate', (state) => {
             const isRejoin = !currentRoom;
+            const wasPending = pendingRoom;
+            setPendingRoom(false);
             currentRoom = state;
             isHost = state.players.find(p => p.id === socket.id)?.isHost;
             // Solo refrescamos la sala de espera si es donde estamos: en juego
@@ -259,8 +284,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             // dispararia una peticion externa por palabra.
             if (state.gameState === 'waiting') {
                 updateWaitingRoom(state);
-                // Tras un F5 en la sala de espera hay que volver a mostrarla
-                if (isRejoin) showView('waiting-room-view');
+                // La sala solo se muestra con datos ya en mano: al confirmarse
+                // la entrada, o al volver a ella tras un F5
+                if (wasPending || isRejoin) showView('waiting-room-view');
             }
             updateScores();
         });
@@ -846,6 +872,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         currentRoom = null;
         isHost = false;
         lastQrUrl = null;
+        setPendingRoom(false);
         if (socket) socket.emit('leaveRoom');
         showView('lobby-view');
     }
@@ -889,12 +916,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         $('setup-guest-mode').classList.remove('hidden');
     });
 
-    $('play-guest-btn').addEventListener('click', () => {
+    $('play-guest-btn').addEventListener('click', async () => {
         const name = $('player-name-input').value.trim();
         if (!name || name.length < 2) {
             showError('setup-error', 'El nombre debe tener al menos 2 caracteres.');
             return;
         }
+        // Los nombres de cuentas registradas estan reservados: mejor decirlo
+        // aqui que dejar que falle al crear la sala
+        try {
+            const res = await fetch(`/api/name-available/${encodeURIComponent(name)}`);
+            const data = await res.json();
+            if (data.available === false) {
+                showError('setup-error', `"${name}" es una cuenta registrada. Inicia sesión o usa otro nombre.`);
+                return;
+            }
+        } catch (e) { /* si la comprobacion falla, el servidor avisara al crear */ }
+
         currentUser = null;
         guestName = name;
         enterLobby();
@@ -961,7 +999,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             roundTime: parseInt($('round-time').textContent)
         });
         isHost = true;
-        showView('waiting-room-view');
+        setPendingRoom(true);
     });
 
     $('join-room-btn').addEventListener('click', () => {
@@ -981,7 +1019,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             sessionToken: currentUser?.token
         });
         isHost = false;
-        showView('waiting-room-view');
+        setPendingRoom(true);
     };
 
     $('browse-rooms-btn').addEventListener('click', () => {
