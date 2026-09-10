@@ -149,15 +149,27 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         socket.on('roomStateUpdate', (state) => {
+            const isRejoin = !currentRoom;
             currentRoom = state;
             isHost = state.players.find(p => p.id === socket.id)?.isHost;
-            updateWaitingRoom(state);
+            // Solo refrescamos la sala de espera si es donde estamos: en juego
+            // este evento llega con cada palabra acertada y regenerar el QR
+            // dispararia una peticion externa por palabra.
+            if (state.gameState === 'waiting') {
+                updateWaitingRoom(state);
+                // Tras un F5 en la sala de espera hay que volver a mostrarla
+                if (isRejoin) showView('waiting-room-view');
+            }
+            updateScores();
         });
 
         socket.on('roundStart', (data) => {
             stopNextTimer();
             showView('game-view');
-            $('round-display').textContent = `Ronda ${data.round}/${currentRoom.totalRounds}`;
+            // El total de rondas viene en el evento: al reanudar tras un F5
+            // puede que aún no tengamos el estado de la sala.
+            const totalRounds = data.totalRounds || currentRoom?.totalRounds || '?';
+            $('round-display').textContent = `Ronda ${data.round}/${totalRounds}`;
 
             rackLetters = data.letters.map(l => canonicalLetter(l));
             builtWord = [];
@@ -165,9 +177,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 .map(l => `<button type="button" class="letter-tile" data-letter="${l}">${l}</button>`)
                 .join('');
             renderBuiltWord();
-            myWords = [];
+
+            // Al reanudar, el servidor devuelve las palabras ya acertadas
+            myWords = (data.words || []).map(w => ({
+                key: canonicalLetter(w.word),
+                word: w.word,
+                type: 'valid',
+                points: w.points
+            }));
             renderMyWords();
-            roundScore = 0;
+            roundScore = myWords.reduce((sum, w) => sum + (w.points || 0), 0);
             updateScorePills();
 
             timeLeft = data.time;
@@ -453,6 +472,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- WAITING ROOM ---
+    let lastQrUrl = null;
+
     function updateWaitingRoom(state) {
         $('room-code-display').textContent = state.code;
 
@@ -460,9 +481,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const soloHint = document.getElementById('solo-hint');
         if (soloHint) soloHint.style.display = state.players.length < 2 ? 'block' : 'none';
 
-        // QR
+        // QR: se regenera solo si cambia la sala (evita una peticion externa
+        // por cada actualizacion de estado)
         const joinUrl = `${window.location.origin}?join=${state.code}`;
-        generateQRCode(joinUrl, $('qr-canvas'));
+        if (lastQrUrl !== joinUrl) {
+            lastQrUrl = joinUrl;
+            generateQRCode(joinUrl, $('qr-canvas'));
+        }
 
         // Players
         const playersHtml = state.players.map(p => `

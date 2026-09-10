@@ -506,21 +506,29 @@ io.on('connection', (socket) => {
         player.name = player.name.replace(/^\u274C /, '');
         socket.join(roomCode);
 
+        if (room.gameState === 'finished') {
+            socket.emit('error', 'La partida ya ha terminado.');
+            return;
+        }
+
+        // El estado de la sala va PRIMERO: 'roundStart' se pinta contando con
+        // que el cliente ya conoce la sala (rondas, jugadores, marcador).
+        broadcastRoomState(roomCode);
+
         if (room.gameState === 'playing') {
-            const letterCount = room.currentLetters.length;
             socket.emit('roundStart', {
                 round: room.currentRound,
                 totalRounds: room.totalRounds,
                 letters: room.currentLetters,
                 time: Math.max(1, Math.ceil((room.roundEndsAt - Date.now()) / 1000)),
-                rejoined: true
+                rejoined: true,
+                // Palabras ya acertadas en esta ronda, para repoblar la lista
+                words: Array.from(player.wordsThisRound).map(w => ({
+                    word: w,
+                    points: calculateScore(w)
+                }))
             });
         }
-        if (room.gameState === 'finished') {
-            socket.emit('error', 'La partida ya ha terminado.');
-            return;
-        }
-        broadcastRoomState(roomCode);
         if (room.isPublic) broadcastPublicRooms();
     });
 
