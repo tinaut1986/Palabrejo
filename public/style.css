@@ -185,16 +185,32 @@ input::placeholder { color: var(--text-dim); }
     margin-top: 8px;
 }
 
-/* User Badge */
+/* User Badge (es el acceso al perfil) */
 .user-badge {
     background: var(--bg-card);
+    border: 1px solid var(--border);
     padding: 8px 16px;
     border-radius: 20px;
     font-size: 0.85rem;
+    font-family: var(--font);
+    font-weight: 600;
     color: var(--accent-hover);
     margin-bottom: 16px;
     display: inline-block;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    transition: border-color 0.2s, transform 0.1s;
 }
+.user-badge:hover { border-color: var(--accent); }
+.user-badge:active { transform: scale(0.97); }
+/* Un invitado no tiene perfil que mirar */
+.user-badge.plain {
+    cursor: default;
+    color: var(--text-dim);
+}
+.user-badge.plain:hover { border-color: var(--border); }
+.user-badge.plain:active { transform: none; }
 
 /* Room Actions */
 .room-actions {
@@ -922,3 +938,163 @@ button.letter-tile:active { transform: scale(0.92); }
 .btn-primary.danger:hover { background: #ff6555; }
 .btn-secondary.danger { border-color: #e74c3c; color: #e74c3c; }
 .btn-secondary.danger:hover { background: #e74c3c; color: #fff; }
+
+/* ==========================================================
+   AMIGOS
+   ========================================================== */
+.lobby-footer .btn-link { position: relative; }
+.notif-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    margin-left: 6px;
+    border-radius: 9px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 800;
+    vertical-align: middle;
+}
+
+.add-friend {
+    display: flex;
+    gap: 8px;
+}
+.add-friend input {
+    flex: 1;
+    margin-bottom: 0;
+}
+.add-friend .btn-secondary {
+    margin-top: 0;
+    white-space: nowrap;
+}
+
+.friends-section {
+    margin-top: 20px;
+    text-align: left;
+}
+.friends-section h3 {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+}
+
+.friend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+}
+.friend-row:last-child { border-bottom: none; }
+.friend-name {
+    flex: 1;
+    font-weight: 600;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 0.95rem;
+    text-align: left;
+    padding: 0;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.friend-name:hover { color: var(--accent-hover); }
+.friend-action {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-family: var(--font);
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.friend-action.accept { border-color: var(--green); color: var(--green); }
+.friend-action.accept:hover { background: var(--green); color: var(--bg-primary); }
+.friend-action.danger { border-color: #e74c3c; color: #e74c3c; }
+.friend-action.danger:hover { background: #e74c3c; color: #fff; }
+
+/* Comparativa: mismo lenguaje visual que el marcador de la partida */
+.metric-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 12px;
+}
+.metric-tab {
+    flex: 1;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    border-radius: 8px;
+    padding: 7px 4px;
+    font-family: var(--font);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+}
+.metric-tab.active {
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+.compare-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 0;
+}
+.compare-rank {
+    width: 22px;
+    font-size: 0.8rem;
+    font-weight: 800;
+    color: var(--text-dim);
+    text-align: center;
+    flex: 0 0 auto;
+}
+.compare-name {
+    width: 84px;
+    flex: 0 0 auto;
+    font-size: 0.85rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.compare-bar-container {
+    flex: 1;
+    height: 8px;
+    background: var(--bg-primary);
+    border-radius: 4px;
+    overflow: hidden;
+}
+.compare-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+    border-radius: 4px;
+    transition: width 0.4s ease;
+}
+.compare-row.is-me .compare-name { color: var(--accent-hover); }
+.compare-row.is-me .compare-bar { background: linear-gradient(90deg, var(--yellow), #f1c40f); }
+.compare-value {
+    width: 52px;
+    flex: 0 0 auto;
+    text-align: right;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.85rem;
+}
+
+#profile-friend-action { margin-top: 12px; }

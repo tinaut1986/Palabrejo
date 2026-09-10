@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // --- ELEMENTS ---
     const $ = id => document.getElementById(id);
-    const views = ['setup-view', 'lobby-view', 'room-browser-view', 'waiting-room-view', 'game-view', 'round-results-view', 'game-over-view', 'profile-view'];
+    const views = ['setup-view', 'lobby-view', 'room-browser-view', 'waiting-room-view', 'game-view', 'round-results-view', 'game-over-view', 'profile-view', 'friends-view'];
 
     function showView(viewId) {
         views.forEach(v => $(v).classList.remove('active'));
@@ -158,9 +158,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function updateUserBadge() {
-        $('user-badge').textContent = currentUser
+        const badge = $('user-badge');
+        badge.textContent = currentUser
             ? `🎮 ${currentUser.username}`
             : `👤 ${guestName} (invitado)`;
+        // Un invitado no tiene perfil ni amigos: el badge no es pulsable
+        badge.classList.toggle('plain', !currentUser);
+        badge.title = currentUser ? 'Ver mi perfil' : '';
+        $('view-friends-btn').classList.toggle('hidden', !currentUser);
+        if (currentUser) refreshFriendsBadge();
     }
 
     // Entra al hall con la identidad ya fijada
@@ -760,11 +766,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // --- PROFILE ---
+    let profileReturnView = 'lobby-view';
+    let profileUsername = null;
+
+    function openProfile(username, returnView = 'lobby-view') {
+        profileReturnView = returnView;
+        loadProfile(username);
+        showView('profile-view');
+    }
+
     async function loadProfile(username) {
+        profileUsername = username;
+        const isMe = currentUser && username === currentUser.username;
+        $('profile-title').textContent = isMe ? 'Mi perfil' : username;
+        $('profile-friend-action').innerHTML = '';
         try {
-            const res = await fetch(`/api/profile/${username}`);
+            const res = await fetch(`/api/profile/${encodeURIComponent(username)}`);
             if (!res.ok) throw new Error('No encontrado');
             const data = await res.json();
+            if (!isMe) renderProfileFriendAction(username);
 
             $('profile-body').innerHTML = `
                 <h3>${data.username}</h3>
@@ -798,6 +818,149 @@ document.addEventListener('DOMContentLoaded', async () => {
             `;
         } catch (e) {
             $('profile-body').innerHTML = '<p class="empty-state">No se pudo cargar el perfil.</p>';
+        }
+    }
+
+    // --- AMIGOS ---
+    let friendsData = { me: null, friends: [], incoming: [], outgoing: [] };
+    let compareMetric = 'total_score';
+
+    const METRIC_LABELS = {
+        total_score: 'puntos',
+        games_won: 'victorias',
+        best_score: 'mejor partida',
+        avg_score: 'media por partida'
+    };
+
+    function authHeaders() {
+        return {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${currentUser?.token || ''}`
+        };
+    }
+
+    async function fetchFriends() {
+        const res = await fetch('/api/friends', { headers: authHeaders() });
+        if (!res.ok) throw new Error('No se pudo cargar la lista de amigos.');
+        return res.json();
+    }
+
+    // Solo el contador del hall, sin pintar la vista entera
+    async function refreshFriendsBadge() {
+        if (!currentUser) return;
+        try {
+            friendsData = await fetchFriends();
+            const badge = $('friends-badge');
+            const n = friendsData.incoming.length;
+            badge.textContent = n;
+            badge.classList.toggle('hidden', n === 0);
+        } catch (e) { /* sin conexion: el contador puede esperar */ }
+    }
+
+    async function loadFriends() {
+        try {
+            friendsData = await fetchFriends();
+            renderFriends();
+            return true;
+        } catch (e) {
+            showError('friends-error', e.message);
+        }
+    }
+
+    async function friendAction(path, username) {
+        try {
+            const res = await fetch(`/api/friends/${path}`, {
+                method: 'POST',
+                headers: authHeaders(),
+                body: JSON.stringify({ username })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'No se pudo completar la acción.');
+            await loadFriends();
+            // El boton de amistad del perfil tambien queda desfasado
+            if ($('profile-view').classList.contains('active') && profileUsername) {
+                renderProfileFriendAction(profileUsername);
+            }
+            return true;
+        } catch (e) {
+            const target = $('profile-view').classList.contains('active')
+                ? 'profile-error' : 'friends-error';
+            showError(target, e.message);
+            return false;
+        }
+    }
+
+    function friendRow(username, actions) {
+        return `
+            <div class="friend-row">
+                <button type="button" class="friend-name" data-user="${username}">${username}</button>
+                ${actions}
+            </div>
+        `;
+    }
+
+    function renderFriends() {
+        const { friends, incoming, outgoing } = friendsData;
+
+        $('friend-requests').classList.toggle('hidden', incoming.length === 0);
+        $('friend-requests-list').innerHTML = incoming.map(u => friendRow(u, `
+            <button type="button" class="friend-action accept" data-accept="${u}">Aceptar</button>
+            <button type="button" class="friend-action danger" data-remove="${u}">Rechazar</button>
+        `)).join('');
+
+        $('friends-pending').classList.toggle('hidden', outgoing.length === 0);
+        $('friends-pending-list').innerHTML = outgoing.map(u => friendRow(u, `
+            <button type="button" class="friend-action" data-remove="${u}">Cancelar</button>
+        `)).join('');
+
+        const badge = $('friends-badge');
+        badge.textContent = incoming.length;
+        badge.classList.toggle('hidden', incoming.length === 0);
+
+        renderCompare();
+    }
+
+    // Comparativa: yo y mis amigos, ordenados por la metrica elegida
+    function renderCompare() {
+        const box = $('friends-compare');
+        const me = friendsData.me;
+        if (!me) { box.innerHTML = ''; return; }
+
+        if (friendsData.friends.length === 0) {
+            box.innerHTML = `<p class="empty-state">Añade amigos para comparar vuestras ${METRIC_LABELS[compareMetric]}.</p>`;
+            return;
+        }
+
+        const rows = [{ ...me, isMe: true }, ...friendsData.friends]
+            .sort((a, b) => b[compareMetric] - a[compareMetric]);
+        const max = Math.max(...rows.map(r => r[compareMetric]), 1);
+        const medals = ['🥇', '🥈', '🥉'];
+
+        box.innerHTML = rows.map((r, i) => `
+            <div class="compare-row ${r.isMe ? 'is-me' : ''}">
+                <span class="compare-rank">${medals[i] || i + 1}</span>
+                <span class="compare-name">${r.username}</span>
+                <div class="compare-bar-container">
+                    <div class="compare-bar" style="width:${(r[compareMetric] / max) * 100}%"></div>
+                </div>
+                <span class="compare-value">${r[compareMetric]}</span>
+            </div>
+        `).join('');
+    }
+
+    // Boton de amistad dentro del perfil de otro jugador
+    function renderProfileFriendAction(username) {
+        const box = $('profile-friend-action');
+        if (!currentUser) { box.innerHTML = ''; return; }
+
+        if (friendsData.friends.some(f => f.username === username)) {
+            box.innerHTML = `<button type="button" class="friend-action danger" data-remove="${username}">Eliminar de amigos</button>`;
+        } else if (friendsData.outgoing.includes(username)) {
+            box.innerHTML = `<button type="button" class="friend-action" data-remove="${username}">Cancelar solicitud</button>`;
+        } else if (friendsData.incoming.includes(username)) {
+            box.innerHTML = `<button type="button" class="friend-action accept" data-accept="${username}">Aceptar solicitud</button>`;
+        } else {
+            box.innerHTML = `<button type="button" class="friend-action accept" data-request="${username}">Añadir a amigos</button>`;
         }
     }
 
@@ -1071,13 +1234,48 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 
     // Profile
-    $('view-profile-btn').addEventListener('click', () => {
-        if (currentUser) {
-            loadProfile(currentUser.username);
-            showView('profile-view');
+    // El nombre del hall es el acceso al perfil
+    $('user-badge').addEventListener('click', () => {
+        if (currentUser) openProfile(currentUser.username, 'lobby-view');
+    });
+    $('back-from-profile-btn').addEventListener('click', () => showView(profileReturnView));
+
+    // Amigos
+    $('view-friends-btn').addEventListener('click', () => {
+        if (!currentUser) return;
+        showView('friends-view');
+        loadFriends();
+    });
+    $('back-from-friends-btn').addEventListener('click', () => showView('lobby-view'));
+
+    $('add-friend-btn').addEventListener('click', async () => {
+        const name = $('add-friend-input').value.trim();
+        if (!name) return showError('friends-error', 'Escribe un nombre de jugador.');
+        if (await friendAction('request', name)) $('add-friend-input').value = '';
+    });
+    $('add-friend-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') $('add-friend-btn').click();
+    });
+
+    // Delegado: las listas se repintan enteras al cambiar algo
+    document.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-accept], [data-remove], [data-request], .friend-name');
+        if (!btn) return;
+        if (btn.dataset.accept) return void friendAction('accept', btn.dataset.accept);
+        if (btn.dataset.request) return void friendAction('request', btn.dataset.request);
+        if (btn.dataset.remove) return void friendAction('remove', btn.dataset.remove);
+        if (btn.classList.contains('friend-name')) {
+            openProfile(btn.dataset.user, 'friends-view');
         }
     });
-    $('back-from-profile-btn').addEventListener('click', () => showView('lobby-view'));
+
+    $('metric-tabs').addEventListener('click', (e) => {
+        const tab = e.target.closest('.metric-tab');
+        if (!tab) return;
+        document.querySelectorAll('.metric-tab').forEach(t => t.classList.toggle('active', t === tab));
+        compareMetric = tab.dataset.metric;
+        renderCompare();
+    });
 
     // Logout
     $('logout-btn').addEventListener('click', async () => {

@@ -53,7 +53,7 @@
             <h2>Lobby</h2>
             <p class="subtitle">Únete a una sala o crea una nueva.</p>
 
-            <div class="user-badge" id="user-badge"></div>
+            <button type="button" class="user-badge" id="user-badge" title="Ver mi perfil"></button>
 
             <div class="room-actions">
                 <div class="join-room-container">
@@ -107,7 +107,9 @@
             <span id="lobby-error" class="error-message"></span>
 
             <div class="lobby-footer">
-                <button id="view-profile-btn" class="btn-link">Mi perfil</button>
+                <button id="view-friends-btn" class="btn-link">
+                    Amigos<span id="friends-badge" class="notif-badge hidden">0</span>
+                </button>
                 <button id="logout-btn" class="btn-link">Cambiar de usuario</button>
             </div>
         </div>
@@ -221,9 +223,47 @@
     <!-- PROFILE VIEW -->
     <div id="profile-view" class="view">
         <div class="modal">
-            <h2>Mi Perfil</h2>
+            <h2 id="profile-title">Mi perfil</h2>
             <div id="profile-body" class="profile-body"></div>
+            <div id="profile-friend-action"></div>
+            <span id="profile-error" class="error-message"></span>
             <button id="back-from-profile-btn" class="btn-secondary">Volver</button>
+        </div>
+    </div>
+
+    <!-- FRIENDS VIEW -->
+    <div id="friends-view" class="view">
+        <div class="modal">
+            <h2>Amigos</h2>
+
+            <div class="add-friend">
+                <input type="text" id="add-friend-input" placeholder="Nombre de jugador" maxlength="20">
+                <button type="button" id="add-friend-btn" class="btn-secondary">Añadir</button>
+            </div>
+            <span id="friends-error" class="error-message"></span>
+
+            <section id="friend-requests" class="friends-section hidden">
+                <h3>Solicitudes recibidas</h3>
+                <div id="friend-requests-list"></div>
+            </section>
+
+            <section id="friends-pending" class="friends-section hidden">
+                <h3>Solicitudes enviadas</h3>
+                <div id="friends-pending-list"></div>
+            </section>
+
+            <section class="friends-section">
+                <h3>Comparativa</h3>
+                <div class="metric-tabs" id="metric-tabs">
+                    <button type="button" class="metric-tab active" data-metric="total_score">Puntos</button>
+                    <button type="button" class="metric-tab" data-metric="games_won">Victorias</button>
+                    <button type="button" class="metric-tab" data-metric="best_score">Mejor</button>
+                    <button type="button" class="metric-tab" data-metric="avg_score">Media</button>
+                </div>
+                <div id="friends-compare" class="compare-list"></div>
+            </section>
+
+            <button id="back-from-friends-btn" class="btn-secondary">Volver</button>
         </div>
     </div>
 

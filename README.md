@@ -96,6 +96,17 @@ Sin `--random` pide la contraseña por teclado, sin mostrarla. Con `--random`
 genera una legible y la imprime, para dictarla. En ambos casos las sesiones
 abiertas del usuario quedan invalidadas.
 
+## Amigos
+
+Los usuarios registrados pueden añadirse entre sí y comparar estadísticas
+(puntos, victorias, mejor partida y media) en un ranking conjunto. Las
+solicitudes se aceptan o rechazan desde el menú de amigos, y pedir amistad a
+quien ya te la había pedido cuenta como aceptarla. Los invitados no tienen
+perfil ni amigos: hace falta una cuenta.
+
+El perfil de un jugador se abre pulsando su nombre, tanto el propio en el hall
+como el de cualquier amigo en la lista.
+
 ## Configuración de sala
 
 Ajustable por el anfitrión al crear la sala: 2–12 jugadores, 1–15 rondas y
