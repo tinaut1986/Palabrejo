@@ -123,6 +123,63 @@ async function loadValidWords() {
     }
 }
 
+// --- SESIONES FIRMADAS ---
+// El cliente guarda un token; el servidor NO se cree el userId que le manden.
+// Formato: base64url(userId.expiraEnMs).base64url(HMAC-SHA256)
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
+let sessionSecret = null;
+
+// El secreto se guarda en la base de datos: asi sobrevive a reconstruir el
+// contenedor y las sesiones abiertas no se invalidan en cada despliegue.
+async function loadSessionSecret() {
+    if (process.env.SESSION_SECRET) {
+        sessionSecret = process.env.SESSION_SECRET;
+        return;
+    }
+    const [rows] = await dbPool.query('SELECT value FROM app_settings WHERE name = ?', ['session_secret']);
+    if (rows.length > 0) {
+        sessionSecret = rows[0].value;
+        return;
+    }
+    sessionSecret = crypto.randomBytes(48).toString('hex');
+    // INSERT IGNORE: si dos arranques coinciden, gana el primero
+    await dbPool.query('INSERT IGNORE INTO app_settings (name, value) VALUES (?, ?)', ['session_secret', sessionSecret]);
+    const [confirmed] = await dbPool.query('SELECT value FROM app_settings WHERE name = ?', ['session_secret']);
+    sessionSecret = confirmed[0].value;
+}
+
+const b64url = buf => Buffer.from(buf).toString('base64url');
+
+function signSession(userId) {
+    const payload = `${userId}.${Date.now() + SESSION_TTL_MS}`;
+    const mac = crypto.createHmac('sha256', sessionSecret).update(payload).digest();
+    return `${b64url(payload)}.${b64url(mac)}`;
+}
+
+// Devuelve el userId si el token es autentico y no ha caducado; null si no.
+function verifySession(token) {
+    if (typeof token !== 'string') return null;
+    const parts = token.split('.');
+    if (parts.length !== 2) return null;
+
+    let payload, mac;
+    try {
+        payload = Buffer.from(parts[0], 'base64url').toString('utf8');
+        mac = Buffer.from(parts[1], 'base64url');
+    } catch (e) { return null; }
+
+    const expected = crypto.createHmac('sha256', sessionSecret).update(payload).digest();
+    if (mac.length !== expected.length) return null;
+    if (!crypto.timingSafeEqual(mac, expected)) return null;
+
+    const [rawId, rawExp] = payload.split('.');
+    const userId = parseInt(rawId, 10);
+    const expiresAt = parseInt(rawExp, 10);
+    if (!Number.isInteger(userId) || !Number.isInteger(expiresAt)) return null;
+    if (Date.now() >= expiresAt) return null;
+    return userId;
+}
+
 // --- MIGRATION LOGIC ---
 async function runDatabaseMigrations() {
     console.log("Checking for database migrations...");
@@ -205,7 +262,11 @@ app.post('/api/register', async (req, res) => {
         const [result] = await dbPool.query('INSERT INTO users (username, password_hash) VALUES (?, ?)', [username, hash]);
         await dbPool.query('INSERT INTO user_stats (user_id) VALUES (?)', [result.insertId]);
 
-        res.status(201).json({ message: 'Registro exitoso.', userId: result.insertId, username });
+        res.status(201).json({
+            message: 'Registro exitoso.',
+            username,
+            token: signSession(result.insertId)
+        });
     } catch (error) {
         console.error("Register error:", error);
         res.status(500).json({ error: 'Error del servidor.' });
@@ -230,9 +291,27 @@ app.post('/api/login', async (req, res) => {
             return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
         }
 
-        res.json({ message: 'Login exitoso.', userId: user.id, username: user.username });
+        res.json({
+            message: 'Login exitoso.',
+            username: user.username,
+            token: signSession(user.id)
+        });
     } catch (error) {
         console.error("Login error:", error);
+        res.status(500).json({ error: 'Error del servidor.' });
+    }
+});
+
+// Revalida el token que el cliente tiene guardado al arrancar
+app.post('/api/session', async (req, res) => {
+    const userId = verifySession(req.body?.token);
+    if (!userId) return res.status(401).json({ error: 'Sesión no válida o caducada.' });
+    try {
+        const [rows] = await dbPool.query('SELECT username FROM users WHERE id = ?', [userId]);
+        if (rows.length === 0) return res.status(401).json({ error: 'Sesión no válida o caducada.' });
+        res.json({ username: rows[0].username });
+    } catch (error) {
+        console.error("Session error:", error);
         res.status(500).json({ error: 'Error del servidor.' });
     }
 });
@@ -423,11 +502,69 @@ function broadcastRoomState(roomCode) {
     io.to(roomCode).emit('roomStateUpdate', getRoomStateForClient(rooms[roomCode]));
 }
 
+// Identidad de confianza para los eventos de socket. El nombre se lee de la
+// base de datos, no del cliente: asi un token valido tampoco permite jugar con
+// el nombre de otro.
+async function resolveIdentity(sessionToken) {
+    if (!sessionToken) return { userId: null, username: null, invalid: false };
+    const userId = verifySession(sessionToken);
+    if (!userId) return { userId: null, username: null, invalid: true };
+    try {
+        const [rows] = await dbPool.query('SELECT username FROM users WHERE id = ?', [userId]);
+        if (rows.length === 0) return { userId: null, username: null, invalid: true };
+        return { userId, username: rows[0].username, invalid: false };
+    } catch (error) {
+        console.error("Identity error:", error);
+        return { userId: null, username: null, invalid: true };
+    }
+}
+
+// Evento propio (no un 'error' generico) para que el cliente sepa que debe
+// olvidar la sesion guardada y volver a la pantalla de acceso
+function emitSessionExpired(socket) {
+    socket.emit('sessionExpired', 'Tu sesión ha caducado. Vuelve a iniciar sesión.');
+}
+
+// Nombre de invitado: se limpia aqui porque llega tal cual del cliente
+function sanitizeGuestName(name) {
+    const clean = String(name || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 20);
+    return clean.length >= 2 ? clean : 'Invitado';
+}
+
+// Los nombres registrados estan reservados: un invitado no puede presentarse
+// con el nombre de una cuenta ajena aunque no pueda usurpar sus estadisticas.
+async function isNameRegistered(name) {
+    try {
+        const [rows] = await dbPool.query('SELECT id FROM users WHERE username = ?', [name]);
+        return rows.length > 0;
+    } catch (error) {
+        console.error("Name check error:", error);
+        return false;
+    }
+}
+
+// Identidad final para entrar a una sala: {name, userId} o {error}
+async function resolvePlayer(sessionToken, playerName) {
+    const identity = await resolveIdentity(sessionToken);
+    if (identity.invalid) return { expired: true };
+    if (identity.userId) return { name: identity.username, userId: identity.userId };
+
+    const name = sanitizeGuestName(playerName);
+    if (await isNameRegistered(name)) {
+        return { error: 'Ese nombre pertenece a una cuenta registrada. Inicia sesión o elige otro.' };
+    }
+    return { name, userId: null };
+}
+
 // --- SOCKET.IO ---
 io.on('connection', (socket) => {
     console.log(`Connected: ${socket.id}`);
 
-    socket.on('createRoom', ({ playerName, isPublic, maxPlayers, totalRounds, roundTime, userId }) => {
+    socket.on('createRoom', async ({ playerName, isPublic, maxPlayers, totalRounds, roundTime, sessionToken }) => {
+        const player = await resolvePlayer(sessionToken, playerName);
+        if (player.expired) return emitSessionExpired(socket);
+        if (player.error) return socket.emit('error', player.error);
+
         const roomCode = generateRoomCode();
         const clampedMax = Math.min(Math.max(maxPlayers || DEFAULT_MAX_PLAYERS, 2), 12);
         const clampedRounds = Math.min(Math.max(totalRounds || DEFAULT_ROUNDS, 1), 15);
@@ -452,7 +589,7 @@ io.on('connection', (socket) => {
         };
 
         const token = crypto.randomBytes(16).toString('hex');
-        addPlayerToRoom(roomCode, socket.id, playerName, true, !!userId, userId, token);
+        addPlayerToRoom(roomCode, socket.id, player.name, true, !player.userId, player.userId, token);
         socket.join(roomCode);
         socket.emit('playerToken', { roomCode, token });
 
@@ -464,14 +601,18 @@ io.on('connection', (socket) => {
         socket.emit('publicRoomsList', getPublicRooms());
     });
 
-    socket.on('joinRoom', ({ roomCode, playerName, userId }) => {
+    socket.on('joinRoom', async ({ roomCode, playerName, sessionToken }) => {
         const room = rooms[roomCode];
         if (!room) return socket.emit('error', 'La sala no existe.');
         if (room.gameState !== 'waiting') return socket.emit('error', 'La partida ya ha comenzado.');
         if (room.players.length >= room.maxPlayers) return socket.emit('error', 'La sala está llena.');
 
+        const player = await resolvePlayer(sessionToken, playerName);
+        if (player.expired) return emitSessionExpired(socket);
+        if (player.error) return socket.emit('error', player.error);
+
         const token = crypto.randomBytes(16).toString('hex');
-        addPlayerToRoom(roomCode, socket.id, playerName, false, !!userId, userId, token);
+        addPlayerToRoom(roomCode, socket.id, player.name, false, !player.userId, player.userId, token);
         socket.join(roomCode);
         socket.emit('playerToken', { roomCode, token });
 
@@ -653,7 +794,7 @@ function addPlayerToRoom(roomCode, playerId, playerName, isHost = false, isGuest
         wordsThisRound: new Set(),
         totalWordsFound: 0,
         isHost,
-        isGuest: !isGuest,
+        isGuest,
         userId,
         disconnected: false,
         resumeToken
@@ -803,6 +944,7 @@ async function endGame(roomCode) {
 // --- SERVER INIT ---
 async function startServer() {
     await runDatabaseMigrations();
+    await loadSessionSecret();
     await loadValidWords();
 
     const activePort = server instanceof https.Server ? PORT_HTTPS : PORT_HTTP;

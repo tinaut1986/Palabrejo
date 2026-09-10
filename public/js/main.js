@@ -1,7 +1,7 @@
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     // --- STATE ---
     let socket = null;
-    let currentUser = null; // { userId, username } or null for guests
+    let currentUser = null; // { username, token } o null si se juega como invitado
     let guestName = '';     // nombre en uso cuando se juega como invitado
     let currentRoom = null;
     let isHost = false;
@@ -121,7 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function saveIdentity() {
         try {
             const identity = currentUser
-                ? { type: 'user', userId: currentUser.userId, username: currentUser.username }
+                ? { type: 'user', username: currentUser.username, token: currentUser.token }
                 : { type: 'guest', name: guestName };
             localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity));
         } catch (e) {}
@@ -131,7 +131,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const raw = JSON.parse(localStorage.getItem(IDENTITY_KEY) || 'null');
             if (!raw) return null;
-            if (raw.type === 'user' && raw.username && raw.userId) return raw;
+            if (raw.type === 'user' && raw.username && raw.token) return raw;
             if (raw.type === 'guest' && raw.name) return raw;
             return null;
         } catch (e) { return null; }
@@ -160,20 +160,38 @@ document.addEventListener('DOMContentLoaded', () => {
         showView('lobby-view');
     }
 
-    // Al arrancar: si ya sabemos quien juega, directo al hall
-    function restoreIdentity() {
+    // Al arrancar: si ya sabemos quien juega, directo al hall. La sesion de un
+    // usuario registrado se revalida contra el servidor, que es quien dice si
+    // el token sigue siendo bueno.
+    async function restoreIdentity() {
         const identity = readIdentity();
         if (!identity) return false;
-        if (identity.type === 'user') {
-            currentUser = { userId: identity.userId, username: identity.username };
-            guestName = '';
-        } else {
+
+        if (identity.type === 'guest') {
             currentUser = null;
             guestName = identity.name;
             $('player-name-input').value = identity.name;
+            enterLobby();
+            return true;
         }
-        enterLobby();
-        return true;
+
+        try {
+            const res = await fetch('/api/session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: identity.token })
+            });
+            if (!res.ok) throw new Error('Sesión caducada');
+            const data = await res.json();
+            currentUser = { username: data.username, token: identity.token };
+            guestName = '';
+            enterLobby();
+            return true;
+        } catch (e) {
+            // Token caducado o revocado: a presentarse de nuevo
+            clearIdentity();
+            return false;
+        }
     }
 
     // --- SOCKET CONNECTION ---
@@ -211,6 +229,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentRoom = null;
                 showView('lobby-view');
             }
+        });
+
+        // La sesion guardada ya no vale: olvidarla y volver a la pantalla de acceso
+        socket.on('sessionExpired', (msg) => {
+            clearIdentity();
+            currentUser = null;
+            guestName = '';
+            currentRoom = null;
+            resumeToken = null;
+            clearResume();
+            stopTimer();
+            stopNextTimer();
+            showView('setup-view');
+            showError('setup-error', msg);
         });
 
         socket.on('roomStateUpdate', (state) => {
@@ -880,7 +912,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
 
-            currentUser = { userId: data.userId, username: data.username };
+            currentUser = { username: data.username, token: data.token };
             guestName = '';
             enterLobby();
         } catch (e) {
@@ -904,7 +936,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
 
-            currentUser = { userId: data.userId, username: data.username };
+            currentUser = { username: data.username, token: data.token };
             guestName = '';
             enterLobby();
         } catch (e) {
@@ -918,11 +950,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const isPublic = $('is-public-switch').checked;
         socket.emit('createRoom', {
             playerName: playerDisplayName(),
+            sessionToken: currentUser?.token,
             isPublic,
             maxPlayers: parseInt($('max-players').textContent),
             totalRounds: parseInt($('total-rounds').textContent),
-            roundTime: parseInt($('round-time').textContent),
-            userId: currentUser?.userId
+            roundTime: parseInt($('round-time').textContent)
         });
         isHost = true;
         showView('waiting-room-view');
@@ -942,7 +974,7 @@ document.addEventListener('DOMContentLoaded', () => {
         socket.emit('joinRoom', {
             roomCode: code,
             playerName: playerDisplayName(),
-            userId: currentUser?.userId
+            sessionToken: currentUser?.token
         });
         isHost = false;
         showView('waiting-room-view');
@@ -1041,7 +1073,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Si ya sabemos quien juega, al hall directamente; si no, a presentarse.
     // Conectar aqui es lo que permite, ademas, que un F5 en plena partida
     // reanude solo, sin volver a escribir el nombre.
-    if (!restoreIdentity()) {
+    if (!(await restoreIdentity())) {
         showView('setup-view');
     } else if (joinCode && !readResume()) {
         // Venimos de un enlace de invitacion y no hay partida que reanudar:

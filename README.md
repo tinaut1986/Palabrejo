@@ -64,6 +64,19 @@ La columna `word` usa collation `utf8mb4_bin` a propósito: con una collation
 insensible a acentos, el índice `UNIQUE` consideraría `canto` y `cantó` la misma
 palabra y se perderían unas 2.300 entradas válidas.
 
+## Cuentas y sesiones
+
+El login devuelve un token de sesión firmado (HMAC-SHA256, 30 días) que el
+cliente guarda y envía al entrar en una sala. El servidor deriva de él la
+identidad: **no se fía del `userId` ni del nombre que manda el cliente**, y para
+un usuario registrado toma el nombre de la base de datos. Los nombres
+registrados están reservados, así que un invitado no puede presentarse con el
+nombre de una cuenta ajena.
+
+El secreto de firma se genera al primer arranque y se guarda en `app_settings`,
+de modo que las sesiones abiertas siguen valiendo tras reconstruir el
+contenedor. Se puede fijar por entorno con `SESSION_SECRET`.
+
 ## Configuración de sala
 
 Ajustable por el anfitrión al crear la sala: 2–12 jugadores, 1–15 rondas y
