@@ -362,7 +362,29 @@ input::placeholder { color: var(--text-dim); }
     font-weight: 700;
     font-size: 0.95rem;
     color: var(--text-dim);
+    flex: 1;
+    text-align: center;
 }
+/* Boton compacto de la cabecera (volver al hall) */
+.icon-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg-card);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-family: var(--font);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    transition: color 0.2s, border-color 0.2s;
+}
+.icon-btn:hover { color: var(--text); border-color: var(--accent); }
+.icon-btn:active { transform: scale(0.95); }
 .timer {
     font-size: 1.4rem;
     font-weight: 900;
@@ -816,3 +838,66 @@ button.letter-tile:active { transform: scale(0.92); }
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* ==========================================================
+   CONFIRM DIALOG — dialogo propio, en el estilo del juego
+   ========================================================== */
+.overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(8, 8, 16, 0.72);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    animation: overlayIn 0.18s ease;
+}
+@keyframes overlayIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+.confirm-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px 20px 20px;
+    width: 100%;
+    max-width: 380px;
+    text-align: center;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.55);
+    animation: confirmIn 0.22s cubic-bezier(.2,.9,.3,1.2);
+}
+@keyframes confirmIn {
+    from { transform: translateY(16px) scale(0.94); opacity: 0; }
+    to { transform: translateY(0) scale(1); opacity: 1; }
+}
+.confirm-card h3 {
+    font-size: 1.15rem;
+    font-weight: 800;
+    margin-bottom: 8px;
+}
+.confirm-message {
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    line-height: 1.45;
+    margin-bottom: 20px;
+}
+.confirm-actions {
+    display: flex;
+    gap: 10px;
+}
+.confirm-actions button {
+    flex: 1;
+    margin-top: 0;
+    width: auto;
+}
+/* Variante destructiva para el boton de confirmar */
+.btn-primary.danger {
+    background: #e74c3c;
+}
+.btn-primary.danger:hover { background: #ff6555; }
+.btn-secondary.danger { border-color: #e74c3c; color: #e74c3c; }
+.btn-secondary.danger:hover { background: #e74c3c; color: #fff; }

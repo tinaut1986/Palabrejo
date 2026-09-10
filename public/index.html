@@ -150,6 +150,9 @@
     <div id="game-view" class="view">
         <header class="game-topbar">
             <div class="topbar-row">
+                <button type="button" id="game-exit-btn" class="icon-btn" title="Volver al hall" aria-label="Volver al hall">
+                    <span aria-hidden="true">←</span> Hall
+                </button>
                 <span id="round-display" class="round-pill">Ronda 1/5</span>
                 <span id="timer-display" class="timer">90s</span>
             </div>
@@ -202,6 +205,7 @@
             <h2 id="round-results-title">Resultados de la ronda</h2>
             <div id="round-results-body" class="results-body"></div>
             <p id="round-results-next" class="subtitle">Siguiente ronda en 5 segundos...</p>
+            <button type="button" id="results-exit-btn" class="btn-link">Volver al hall</button>
         </div>
     </div>
 
@@ -220,6 +224,18 @@
             <h2>Mi Perfil</h2>
             <div id="profile-body" class="profile-body"></div>
             <button id="back-from-profile-btn" class="btn-secondary">Volver</button>
+        </div>
+    </div>
+
+    <!-- CONFIRM DIALOG (integrado en el juego, sin confirm() del navegador) -->
+    <div id="confirm-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>
+        <div class="confirm-card">
+            <h3 id="confirm-title">¿Seguro?</h3>
+            <p id="confirm-message" class="confirm-message"></p>
+            <div class="confirm-actions">
+                <button type="button" id="confirm-cancel" class="btn-secondary">Cancelar</button>
+                <button type="button" id="confirm-accept" class="btn-primary danger">Salir</button>
+            </div>
         </div>
     </div>
 

@@ -224,6 +224,8 @@ document.addEventListener('DOMContentLoaded', () => {
         socket.on('gameOver', (data) => {
             stopTimer();
             stopNextTimer();
+            // La partida ha terminado: salir ya no pide confirmacion
+            if (currentRoom) currentRoom.gameState = 'finished';
             showGameOver(data);
         });
 
@@ -438,6 +440,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function handleKeyboardKey(e) {
+        // Con el dialogo abierto, Escape cancela y el resto no llega al juego
+        if (isConfirmOpen()) {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                closeConfirm(false);
+            }
+            return;
+        }
         if (!$('game-view').classList.contains('active')) return;
         const key = e.key;
         if (key === 'Backspace') {
@@ -673,7 +683,95 @@ document.addEventListener('DOMContentLoaded', () => {
         'round-time': { min: 30, max: 180, step: 15 }
     };
 
+    // --- CONFIRM DIALOG ---
+    // Dialogo propio con el estilo del juego (nada de confirm() del navegador).
+    // Devuelve una promesa: true si el jugador confirma, false si cancela.
+    let closeConfirm = null;
+
+    function confirmDialog({ title, message, confirmText = 'Salir', cancelText = 'Cancelar' }) {
+        const overlay = $('confirm-overlay');
+        $('confirm-title').textContent = title;
+        $('confirm-message').textContent = message;
+        $('confirm-accept').textContent = confirmText;
+        $('confirm-cancel').textContent = cancelText;
+
+        // Si ya hubiera uno abierto, se resuelve como cancelado
+        if (closeConfirm) closeConfirm(false);
+
+        overlay.hidden = false;
+        overlay.classList.remove('hidden');
+        // Cancelar tiene el foco: un Enter accidental no saca de la partida
+        $('confirm-cancel').focus();
+
+        return new Promise(resolve => {
+            closeConfirm = (result) => {
+                closeConfirm = null;
+                overlay.hidden = true;
+                overlay.classList.add('hidden');
+                resolve(result);
+            };
+        });
+    }
+
+    function isConfirmOpen() {
+        return closeConfirm !== null;
+    }
+
+    // Hay partida abierta mientras estemos en una sala que no ha terminado
+    function hasOpenGame() {
+        return !!currentRoom && currentRoom.gameState !== 'finished';
+    }
+
+    // Pregunta solo si de verdad hay algo que perder
+    async function confirmLeave() {
+        if (!hasOpenGame()) return true;
+        const playing = currentRoom.gameState === 'playing';
+        return confirmDialog({
+            title: playing ? '¿Salir de la partida?' : '¿Salir de la sala?',
+            message: playing
+                ? 'La partida sigue en marcha. Si sales ahora pierdes tu puntuación de esta partida y el resto de jugadores continuarán sin ti.'
+                : 'Saldrás de la sala y volverás al hall.',
+            confirmText: playing ? 'Salir de la partida' : 'Salir de la sala'
+        });
+    }
+
+    // Abandona la sala y vuelve al hall con una conexion limpia
+    function leaveToLobby() {
+        stopTimer();
+        stopNextTimer();
+        clearResume();
+        resumeToken = null;
+        currentRoom = null;
+        isHost = false;
+        if (socket) socket.disconnect();
+        socket = null;
+        showView('lobby-view');
+        connectSocket();
+    }
+
+    async function requestLeaveToLobby() {
+        if (await confirmLeave()) leaveToLobby();
+    }
+
     // --- EVENT LISTENERS ---
+
+    $('confirm-accept').addEventListener('click', () => closeConfirm && closeConfirm(true));
+    $('confirm-cancel').addEventListener('click', () => closeConfirm && closeConfirm(false));
+    // Pulsar fuera de la tarjeta cancela
+    $('confirm-overlay').addEventListener('click', (e) => {
+        if (e.target === $('confirm-overlay') && closeConfirm) closeConfirm(false);
+    });
+
+    // Cerrar pestana o recargar con partida abierta: aviso del navegador.
+    // No se puede maquetar (lo impone el navegador), pero sin el se perderia
+    // la partida sin mediar pregunta.
+    window.addEventListener('beforeunload', (e) => {
+        if (!hasOpenGame()) return;
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+    });
+
 
     // Setup
     $('show-auth-btn').addEventListener('click', () => {
@@ -808,15 +906,7 @@ document.addEventListener('DOMContentLoaded', () => {
         socket.emit('startGame');
     });
 
-    $('leave-room-btn').addEventListener('click', () => {
-        clearResume();
-        resumeToken = null;
-        currentRoom = null;
-        if (socket) socket.disconnect();
-        socket = null;
-        showView('lobby-view');
-        connectSocket();
-    });
+    $('leave-room-btn').addEventListener('click', requestLeaveToLobby);
 
     // Game
     // Rack letters are clickable (delegated, survives innerHTML swaps)
@@ -827,6 +917,8 @@ document.addEventListener('DOMContentLoaded', () => {
         animateTilePress(tile);
         vibrate(8);
     });
+    $('game-exit-btn').addEventListener('click', requestLeaveToLobby);
+    $('results-exit-btn').addEventListener('click', requestLeaveToLobby);
     $('backspace-btn').addEventListener('click', backspaceBuilt);
     $('clear-btn').addEventListener('click', clearBuilt);
     $('submit-built-btn').addEventListener('click', submitBuild);
@@ -841,6 +933,7 @@ document.addEventListener('DOMContentLoaded', () => {
         showView('lobby-view');
     });
 
+
     // Profile
     $('view-profile-btn').addEventListener('click', () => {
         if (currentUser) {
@@ -851,11 +944,15 @@ document.addEventListener('DOMContentLoaded', () => {
     $('back-from-profile-btn').addEventListener('click', () => showView('lobby-view'));
 
     // Logout
-    $('logout-btn').addEventListener('click', () => {
+    $('logout-btn').addEventListener('click', async () => {
+        if (!(await confirmLeave())) return;
         currentUser = null;
+        stopTimer();
+        stopNextTimer();
         clearResume();
         resumeToken = null;
         currentRoom = null;
+        isHost = false;
         if (socket) socket.disconnect();
         socket = null;
         showView('setup-view');
