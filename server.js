@@ -563,6 +563,37 @@ async function resolvePlayer(sessionToken, playerName) {
     return { name, userId: null };
 }
 
+// Saca al socket de cualquier sala en la que este. Un socket solo puede
+// pertenecer a una sala: si se queda en dos, findRoomBySocket devuelve la
+// primera que encuentra y las acciones acaban aplicandose a la sala
+// equivocada (empezar la partida, enviar palabras, etc.).
+// Semantica de "me voy": el jugador se elimina, al contrario que en una
+// desconexion, donde se le guarda el sitio un rato por si vuelve.
+function detachSocketFromRooms(socket) {
+    for (const [roomCode, room] of Object.entries(rooms)) {
+        if (!room.players.some(p => p.id === socket.id)) continue;
+
+        socket.leave(roomCode);
+        const wasHost = room.hostId === socket.id;
+        room.players = room.players.filter(p => p.id !== socket.id);
+
+        if (room.players.length === 0) {
+            if (room.roundTimer) clearTimeout(room.roundTimer);
+            if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
+            delete rooms[roomCode];
+            if (room.isPublic) broadcastPublicRooms();
+            continue;
+        }
+
+        if (wasHost) {
+            room.hostId = room.players[0].id;
+            room.players[0].isHost = true;
+        }
+        broadcastRoomState(roomCode);
+        if (room.isPublic) broadcastPublicRooms();
+    }
+}
+
 // --- SOCKET.IO ---
 io.on('connection', (socket) => {
     console.log(`Connected: ${socket.id}`);
@@ -571,6 +602,8 @@ io.on('connection', (socket) => {
         const player = await resolvePlayer(sessionToken, playerName);
         if (player.expired) return emitSessionExpired(socket);
         if (player.error) return socket.emit('error', player.error);
+
+        detachSocketFromRooms(socket);
 
         const roomCode = generateRoomCode();
         const clampedMax = Math.min(Math.max(maxPlayers || DEFAULT_MAX_PLAYERS, 2), 12);
@@ -604,6 +637,11 @@ io.on('connection', (socket) => {
         if (rooms[roomCode].isPublic) broadcastPublicRooms();
     });
 
+    // El cliente avisa al volver al hall, en lugar de dejar el socket dentro
+    socket.on('leaveRoom', () => {
+        detachSocketFromRooms(socket);
+    });
+
     socket.on('getPublicRooms', () => {
         socket.emit('publicRoomsList', getPublicRooms());
     });
@@ -617,6 +655,8 @@ io.on('connection', (socket) => {
         const player = await resolvePlayer(sessionToken, playerName);
         if (player.expired) return emitSessionExpired(socket);
         if (player.error) return socket.emit('error', player.error);
+
+        detachSocketFromRooms(socket);
 
         const token = crypto.randomBytes(16).toString('hex');
         addPlayerToRoom(roomCode, socket.id, player.name, false, !player.userId, player.userId, token);
@@ -653,6 +693,10 @@ io.on('connection', (socket) => {
         player.disconnected = false;
         player.name = player.name.replace(/^\u274C /, '');
         socket.join(roomCode);
+
+        // El socket.id cambia al reconectar: sin esto el host que vuelve
+        // conservaba la insignia pero perdia sus permisos
+        if (player.isHost) room.hostId = socket.id;
 
         if (room.gameState === 'finished') {
             socket.emit('error', 'La partida ya ha terminado.');
@@ -766,19 +810,8 @@ io.on('connection', (socket) => {
         if (!player) return;
 
         if (room.gameState === 'waiting') {
-            room.players = room.players.filter(p => p.id !== socket.id);
-            if (room.players.length === 0) {
-                if (room.roundTimer) clearTimeout(room.roundTimer);
-                if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
-                delete rooms[roomCode];
-                return;
-            }
-            if (room.hostId === socket.id) {
-                room.hostId = room.players[0].id;
-                room.players[0].isHost = true;
-            }
-            broadcastRoomState(roomCode);
-            if (room.isPublic) broadcastPublicRooms();
+            // Antes de empezar no hay nada que guardar: se le saca de la sala
+            detachSocketFromRooms(socket);
         } else if (room.gameState !== 'finished') {
             // In-progress game: keep the room alive for a grace period so a
             // transient connection drop (mobile wifi, etc.) does not kill the

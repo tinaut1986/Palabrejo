@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let timeLeft = 0;
     let nextTimer = null;
     let roundScore = 0; // puntos de la ronda en curso (mío)
+    let lastQrUrl = null; // ultimo QR pintado, para no regenerarlo sin motivo
 
     // --- ELEMENTS ---
     const $ = id => document.getElementById(id);
@@ -222,11 +223,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         socket.on('error', (msg) => {
             showError('lobby-error', msg);
             showError('setup-error', msg);
-            if (resumeToken || currentRoom) {
-                // The game context is gone or unrecoverable -> back to lobby
-                clearResume();
-                resumeToken = null;
+            // Cualquier error de sala deja el contexto de partida inservible.
+            // Se limpia siempre, tambien cuando el estado local ya esta vacio:
+            // justo tras recargar quedaba un token de reanudacion caducado.
+            clearResume();
+            resumeToken = null;
+            if (currentRoom) {
                 currentRoom = null;
+                stopTimer();
+                stopNextTimer();
                 showView('lobby-view');
             }
         });
@@ -579,8 +584,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // --- WAITING ROOM ---
-    let lastQrUrl = null;
-
     function updateWaitingRoom(state) {
         $('room-code-display').textContent = state.code;
 
@@ -832,7 +835,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // Abandona la sala y vuelve al hall con una conexion limpia
+    // Abandona la sala y vuelve al hall. Avisar al servidor es imprescindible:
+    // si el socket se queda dentro de la sala vieja, la siguiente partida que
+    // se cree conviviria con ella y las acciones irian a la equivocada.
     function leaveToLobby() {
         stopTimer();
         stopNextTimer();
@@ -840,10 +845,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         resumeToken = null;
         currentRoom = null;
         isHost = false;
-        if (socket) socket.disconnect();
-        socket = null;
+        lastQrUrl = null;
+        if (socket) socket.emit('leaveRoom');
         showView('lobby-view');
-        connectSocket();
     }
 
     async function requestLeaveToLobby() {
@@ -1025,12 +1029,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.addEventListener('keydown', handleKeyboardKey);
 
     // Game over
-    $('back-to-lobby-final').addEventListener('click', () => {
-        clearResume();
-        resumeToken = null;
-        currentRoom = null;
-        showView('lobby-view');
-    });
+    $('back-to-lobby-final').addEventListener('click', leaveToLobby);
 
 
     // Profile
@@ -1054,7 +1053,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         resumeToken = null;
         currentRoom = null;
         isHost = false;
-        if (socket) socket.disconnect();
+        lastQrUrl = null;
+        if (socket) {
+            socket.emit('leaveRoom');
+            socket.disconnect();
+        }
         socket = null;
         showView('setup-view');
     });
