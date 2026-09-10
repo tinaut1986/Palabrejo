@@ -763,14 +763,36 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Cerrar pestana o recargar con partida abierta: aviso del navegador.
-    // No se puede maquetar (lo impone el navegador), pero sin el se perderia
-    // la partida sin mediar pregunta.
+    // Es la unica via para esos casos y no se puede maquetar, asi que actua
+    // como red de seguridad de los dialogos propios de mas abajo.
+    let allowUnload = false;
     window.addEventListener('beforeunload', (e) => {
-        if (!hasOpenGame()) return;
+        if (allowUnload || !hasOpenGame()) return;
         e.preventDefault();
         e.returnValue = '';
         return '';
     });
+
+    // F5 / Ctrl+R / Cmd+R: intentamos adelantarnos al navegador para poder
+    // preguntar con el dialogo del juego. Algunos navegadores tratan estas
+    // teclas como suyas e ignoran el preventDefault; en ese caso salta el
+    // aviso de beforeunload, asi que nunca se recarga sin preguntar.
+    document.addEventListener('keydown', async (e) => {
+        const isReloadKey = e.key === 'F5' ||
+            ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'r');
+        if (!isReloadKey || !hasOpenGame() || isConfirmOpen()) return;
+
+        e.preventDefault();
+        const ok = await confirmDialog({
+            title: '¿Recargar la partida?',
+            message: 'Volverás a entrar automáticamente con tus palabras y tu puntuación, pero perderás los segundos que tarde en recargar.',
+            confirmText: 'Recargar'
+        });
+        if (ok) {
+            allowUnload = true; // no preguntar dos veces
+            window.location.reload();
+        }
+    }, true);
 
 
     // Setup

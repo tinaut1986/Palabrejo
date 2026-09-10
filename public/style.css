@@ -14,7 +14,12 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
-html, body { height: 100%; }
+html, body {
+    height: 100%;
+    /* Desactiva el "tirar para recargar" del movil: en pleno juego se
+       disparaba al arrastrar sin querer sobre la pantalla */
+    overscroll-behavior: none;
+}
 
 body {
     font-family: var(--font);
@@ -441,6 +446,7 @@ input::placeholder { color: var(--text-dim); }
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
+    overscroll-behavior-y: contain;
     -webkit-overflow-scrolling: touch;
     padding: 12px;
     display: flex;
