@@ -2,6 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- STATE ---
     let socket = null;
     let currentUser = null; // { userId, username } or null for guests
+    let guestName = '';     // nombre en uso cuando se juega como invitado
     let currentRoom = null;
     let isHost = false;
     let resumeToken = null;
@@ -109,6 +110,70 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     function clearResume() {
         try { sessionStorage.removeItem('palabreroResume'); } catch (e) {}
+    }
+
+    // --- IDENTIDAD PERSISTENTE ---
+    // Recuerda con quien se jugo la ultima vez (registrado o invitado) para no
+    // tener que volver a presentarse. En localStorage, asi que sobrevive a
+    // cerrar el navegador, al contrario que el token de reanudacion de partida.
+    const IDENTITY_KEY = 'palabreroIdentity';
+
+    function saveIdentity() {
+        try {
+            const identity = currentUser
+                ? { type: 'user', userId: currentUser.userId, username: currentUser.username }
+                : { type: 'guest', name: guestName };
+            localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity));
+        } catch (e) {}
+    }
+
+    function readIdentity() {
+        try {
+            const raw = JSON.parse(localStorage.getItem(IDENTITY_KEY) || 'null');
+            if (!raw) return null;
+            if (raw.type === 'user' && raw.username && raw.userId) return raw;
+            if (raw.type === 'guest' && raw.name) return raw;
+            return null;
+        } catch (e) { return null; }
+    }
+
+    function clearIdentity() {
+        try { localStorage.removeItem(IDENTITY_KEY); } catch (e) {}
+    }
+
+    // Nombre con el que entrar a las salas
+    function playerDisplayName() {
+        return currentUser ? currentUser.username : guestName;
+    }
+
+    function updateUserBadge() {
+        $('user-badge').textContent = currentUser
+            ? `🎮 ${currentUser.username}`
+            : `👤 ${guestName} (invitado)`;
+    }
+
+    // Entra al hall con la identidad ya fijada
+    function enterLobby() {
+        saveIdentity();
+        updateUserBadge();
+        if (!socket) connectSocket();
+        showView('lobby-view');
+    }
+
+    // Al arrancar: si ya sabemos quien juega, directo al hall
+    function restoreIdentity() {
+        const identity = readIdentity();
+        if (!identity) return false;
+        if (identity.type === 'user') {
+            currentUser = { userId: identity.userId, username: identity.username };
+            guestName = '';
+        } else {
+            currentUser = null;
+            guestName = identity.name;
+            $('player-name-input').value = identity.name;
+        }
+        enterLobby();
+        return true;
     }
 
     // --- SOCKET CONNECTION ---
@@ -762,37 +827,20 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target === $('confirm-overlay') && closeConfirm) closeConfirm(false);
     });
 
-    // Cerrar pestana o recargar con partida abierta: aviso del navegador.
-    // Es la unica via para esos casos y no se puede maquetar, asi que actua
-    // como red de seguridad de los dialogos propios de mas abajo.
-    let allowUnload = false;
+    // Recargar (F5, boton de recarga, barra de direcciones) o cerrar la
+    // pestana con partida en curso. Es el unico gancho posible para estos
+    // casos y el dialogo lo pone el navegador: no se puede maquetar ni
+    // cambiarle el texto. Las teclas de recarga no se pueden interceptar,
+    // el navegador las atiende antes que la pagina.
+    // El valor de returnValue debe ser una cadena NO vacia: asignar '' se
+    // interpreta como "no preguntes" y el aviso no aparece.
     window.addEventListener('beforeunload', (e) => {
-        if (allowUnload || !hasOpenGame()) return;
+        if (!hasOpenGame()) return;
+        const msg = 'Tienes una partida en curso.';
         e.preventDefault();
-        e.returnValue = '';
-        return '';
+        e.returnValue = msg;
+        return msg;
     });
-
-    // F5 / Ctrl+R / Cmd+R: intentamos adelantarnos al navegador para poder
-    // preguntar con el dialogo del juego. Algunos navegadores tratan estas
-    // teclas como suyas e ignoran el preventDefault; en ese caso salta el
-    // aviso de beforeunload, asi que nunca se recarga sin preguntar.
-    document.addEventListener('keydown', async (e) => {
-        const isReloadKey = e.key === 'F5' ||
-            ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'r');
-        if (!isReloadKey || !hasOpenGame() || isConfirmOpen()) return;
-
-        e.preventDefault();
-        const ok = await confirmDialog({
-            title: '¿Recargar la partida?',
-            message: 'Volverás a entrar automáticamente con tus palabras y tu puntuación, pero perderás los segundos que tarde en recargar.',
-            confirmText: 'Recargar'
-        });
-        if (ok) {
-            allowUnload = true; // no preguntar dos veces
-            window.location.reload();
-        }
-    }, true);
 
 
     // Setup
@@ -812,9 +860,8 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         currentUser = null;
-        connectSocket();
-        showView('lobby-view');
-        $('user-badge').textContent = `👤 ${name} (invitado)`;
+        guestName = name;
+        enterLobby();
     });
 
     $('register-btn').addEventListener('click', async () => {
@@ -834,9 +881,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!res.ok) throw new Error(data.error);
 
             currentUser = { userId: data.userId, username: data.username };
-            connectSocket();
-            showView('lobby-view');
-            $('user-badge').textContent = `🎮 ${data.username}`;
+            guestName = '';
+            enterLobby();
         } catch (e) {
             showError('setup-error', e.message);
         }
@@ -859,9 +905,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!res.ok) throw new Error(data.error);
 
             currentUser = { userId: data.userId, username: data.username };
-            connectSocket();
-            showView('lobby-view');
-            $('user-badge').textContent = `🎮 ${data.username}`;
+            guestName = '';
+            enterLobby();
         } catch (e) {
             showError('setup-error', e.message);
         }
@@ -872,7 +917,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!socket) return;
         const isPublic = $('is-public-switch').checked;
         socket.emit('createRoom', {
-            playerName: currentUser ? currentUser.username : $('player-name-input').value.trim(),
+            playerName: playerDisplayName(),
             isPublic,
             maxPlayers: parseInt($('max-players').textContent),
             totalRounds: parseInt($('total-rounds').textContent),
@@ -896,7 +941,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!socket) return;
         socket.emit('joinRoom', {
             roomCode: code,
-            playerName: currentUser ? currentUser.username : $('player-name-input').value.trim(),
+            playerName: playerDisplayName(),
             userId: currentUser?.userId
         });
         isHost = false;
@@ -968,7 +1013,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Logout
     $('logout-btn').addEventListener('click', async () => {
         if (!(await confirmLeave())) return;
+        clearIdentity();
         currentUser = null;
+        guestName = '';
         stopTimer();
         stopNextTimer();
         clearResume();
@@ -983,10 +1030,22 @@ document.addEventListener('DOMContentLoaded', () => {
     // Periodic scores update
     setInterval(updateScores, 500);
 
-    // Check for ?join=CODE in URL
+    // --- ARRANQUE ---
+    // Codigo de sala en la URL (enlace o QR compartido)
     const params = new URLSearchParams(window.location.search);
     const joinCode = params.get('join');
     if (joinCode) {
-        $('room-code-input').value = joinCode;
+        $('room-code-input').value = joinCode.toUpperCase();
+    }
+
+    // Si ya sabemos quien juega, al hall directamente; si no, a presentarse.
+    // Conectar aqui es lo que permite, ademas, que un F5 en plena partida
+    // reanude solo, sin volver a escribir el nombre.
+    if (!restoreIdentity()) {
+        showView('setup-view');
+    } else if (joinCode && !readResume()) {
+        // Venimos de un enlace de invitacion y no hay partida que reanudar:
+        // entrar en la sala sin mas pasos
+        joinRoom(joinCode.toUpperCase());
     }
 });
