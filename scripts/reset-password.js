@@ -3,6 +3,7 @@
 //
 //   docker exec -it palabrero_server node scripts/reset-password.js <usuario>
 //   docker exec -it palabrero_server node scripts/reset-password.js <usuario> --random
+//   docker exec -it palabrero_server node scripts/reset-password.js <usuario> --logout-all
 //   docker exec -it palabrero_server node scripts/reset-password.js --list
 //
 // Al cambiar la contrasena se incrementa users.token_version, de modo que todas
@@ -53,10 +54,12 @@ async function main() {
     const args = process.argv.slice(2);
     const random = args.includes('--random');
     const list = args.includes('--list');
+    const logoutAll = args.includes('--logout-all');
     const username = args.find(a => !a.startsWith('--'));
 
     if (!list && !username) {
         console.error('Uso: node scripts/reset-password.js <usuario> [--random]');
+        console.error('     node scripts/reset-password.js <usuario> --logout-all');
         console.error('     node scripts/reset-password.js --list');
         process.exit(1);
     }
@@ -82,6 +85,14 @@ async function main() {
             process.exit(2);
         }
         const user = users[0];
+
+        // Cerrar sesiones sin tocar la contrasena: las sesiones no caducan
+        // solas, asi que esta es la forma de echar a un dispositivo perdido.
+        if (logoutAll) {
+            await db.query('UPDATE users SET token_version = token_version + 1 WHERE id = ?', [user.id]);
+            console.log(`Sesiones de "${user.username}" cerradas. Tendra que iniciar sesion de nuevo.`);
+            return;
+        }
 
         let password;
         if (random) {

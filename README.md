@@ -66,8 +66,9 @@ palabra y se perderían unas 2.300 entradas válidas.
 
 ## Cuentas y sesiones
 
-El login devuelve un token de sesión firmado (HMAC-SHA256, 30 días) que el
-cliente guarda y envía al entrar en una sala. El servidor deriva de él la
+El login devuelve un token de sesión firmado (HMAC-SHA256) que el cliente
+guarda y envía al entrar en una sala. **Por defecto no caduca**: se puede
+poner un plazo con `SESSION_TTL_DAYS` (en días; `0` o sin definir = nunca). El servidor deriva de él la
 identidad: **no se fía del `userId` ni del nombre que manda el cliente**, y para
 un usuario registrado toma el nombre de la base de datos. Los nombres
 registrados están reservados, así que un invitado no puede presentarse con el
@@ -95,6 +96,13 @@ docker exec -it palabrero_server node scripts/reset-password.js <usuario> --rand
 Sin `--random` pide la contraseña por teclado, sin mostrarla. Con `--random`
 genera una legible y la imprime, para dictarla. En ambos casos las sesiones
 abiertas del usuario quedan invalidadas.
+
+Como las sesiones no caducan solas, `--logout-all` las cierra sin cambiar la
+contraseña — para echar a un dispositivo perdido:
+
+```bash
+docker exec -it palabrero_server node scripts/reset-password.js <usuario> --logout-all
+```
 
 ## Amigos
 

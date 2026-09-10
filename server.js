@@ -126,7 +126,14 @@ async function loadValidWords() {
 // --- SESIONES FIRMADAS ---
 // El cliente guarda un token; el servidor NO se cree el userId que le manden.
 // Formato: base64url(userId.expiraEnMs).base64url(HMAC-SHA256)
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
+// Duracion de la sesion en dias. 0 (por defecto) = no caduca nunca: en el
+// token se firma un 0 en lugar de una fecha. La sesion sigue siendo revocable
+// por token_version, asi que "para siempre" no significa "sin control".
+const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS ?? 0);
+const SESSION_TTL_MS = SESSION_TTL_DAYS > 0
+    ? SESSION_TTL_DAYS * 24 * 60 * 60 * 1000
+    : 0;
+const NEVER_EXPIRES = 0;
 let sessionSecret = null;
 
 // El secreto se guarda en la base de datos: asi sobrevive a reconstruir el
@@ -151,7 +158,8 @@ async function loadSessionSecret() {
 const b64url = buf => Buffer.from(buf).toString('base64url');
 
 function signSession(userId, tokenVersion) {
-    const payload = `${userId}.${tokenVersion}.${Date.now() + SESSION_TTL_MS}`;
+    const expiresAt = SESSION_TTL_MS > 0 ? Date.now() + SESSION_TTL_MS : NEVER_EXPIRES;
+    const payload = `${userId}.${tokenVersion}.${expiresAt}`;
     const mac = crypto.createHmac('sha256', sessionSecret).update(payload).digest();
     return `${b64url(payload)}.${b64url(mac)}`;
 }
@@ -179,7 +187,8 @@ function parseSession(token) {
     const tokenVersion = parseInt(rawVersion, 10);
     const expiresAt = parseInt(rawExp, 10);
     if (!Number.isInteger(userId) || !Number.isInteger(tokenVersion) || !Number.isInteger(expiresAt)) return null;
-    if (Date.now() >= expiresAt) return null;
+    // Los tokens emitidos con caducidad siguen respetandola
+    if (expiresAt !== NEVER_EXPIRES && Date.now() >= expiresAt) return null;
     return { userId, tokenVersion };
 }
 
