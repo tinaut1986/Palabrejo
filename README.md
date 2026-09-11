@@ -11,8 +11,15 @@ formar con ellas las palabras más largas. Diseñado para jugarse **en el móvil
 - Cada ronda muestra un conjunto de letras. Formas palabras pulsando las
   teclas (o escribiendo, en escritorio) y las envías.
 - Puntuación por longitud: 3 letras = 1 punto, 4 = 2, 5 = 4, 6 = 7, 7+ = 10.
-- Mínimo 3 letras. Una palabra solo puntúa para el primer jugador que la envía
-  en esa ronda.
+- **PALABREJO**: la palabra que usa *todas* las letras del tablero (pueden
+  repetirse) vale **+15 puntos extra**. Cuando alguien encuentra uno se avisa a
+  la sala, pero sin decir cuál es.
+- Mínimo 3 letras. Nadie puede repetir una palabra suya dentro de la misma
+  ronda.
+- Dos modos, elegidos al crear la sala:
+  - **Normal** (por defecto): varios jugadores pueden encontrar la misma
+    palabra y a todos les puntúa.
+  - **Exclusivo**: cada palabra puntúa solo para quien la envía primero.
 - Al acabar todas las rondas gana quien más puntos acumule.
 
 Las palabras se validan contra un diccionario de ~108.000 palabras del español

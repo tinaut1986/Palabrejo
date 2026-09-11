@@ -1,8 +1,8 @@
 const {
-    calculateScore, normalizeForMatch, sanitizeGuestName,
+    calculateScore, isPalabrejo, normalizeGameMode, normalizeForMatch, sanitizeGuestName,
     generateLetters, countPlayableWords, selectPlayableLetters,
     MIN_LETTERS, MAX_LETTERS, MIN_WORD_LENGTH, MIN_VOWELS, VOWELS,
-    MIN_PLAYABLE_WORDS, MAX_LETTER_ROLL_ATTEMPTS
+    MIN_PLAYABLE_WORDS, MAX_LETTER_ROLL_ATTEMPTS, PALABREJO_BONUS, DEFAULT_GAME_MODE
 } = require('../lib/game-logic');
 
 // --- calculateScore ---
@@ -13,6 +13,43 @@ describe('calculateScore', () => {
         expect(calculateScore('plato')).toBe(4);    // 5
         expect(calculateScore('bocado')).toBe(7);   // 6
         expect(calculateScore('terremoto')).toBe(10); // 7+
+    });
+
+    test('suma el bonus de palabrejo cuando se usan todas las letras', () => {
+        expect(calculateScore('mesa', ['M', 'E', 'S', 'A'])).toBe(2 + PALABREJO_BONUS);
+        // Sobra la Z: no estan todas
+        expect(calculateScore('mesa', ['M', 'E', 'S', 'A', 'Z'])).toBe(2);
+        // Sin tablero (marcadores historicos) se puntua solo por longitud
+        expect(calculateScore('mesa')).toBe(2);
+    });
+});
+
+// --- isPalabrejo ---
+describe('isPalabrejo', () => {
+    test('exige todas las letras, pero permite repetirlas', () => {
+        expect(isPalabrejo('caracol', ['C', 'A', 'R', 'O', 'L'])).toBe(true);
+        expect(isPalabrejo('caracol', ['C', 'A', 'R', 'O', 'L', 'T'])).toBe(false);
+    });
+
+    test('ignora acentos y trata la ñ como letra propia', () => {
+        expect(isPalabrejo('canción', ['C', 'A', 'N', 'I', 'O'])).toBe(true);
+        expect(isPalabrejo('mano', ['M', 'A', 'Ñ', 'O'])).toBe(false);
+        expect(isPalabrejo('maño', ['M', 'A', 'Ñ', 'O'])).toBe(true);
+    });
+
+    test('sin tablero no hay jugada especial', () => {
+        expect(isPalabrejo('mesa', [])).toBe(false);
+        expect(isPalabrejo('mesa', undefined)).toBe(false);
+    });
+});
+
+// --- normalizeGameMode ---
+describe('normalizeGameMode', () => {
+    test('acepta los modos conocidos y descarta lo demas', () => {
+        expect(normalizeGameMode('normal')).toBe('normal');
+        expect(normalizeGameMode('exclusivo')).toBe('exclusivo');
+        expect(normalizeGameMode('loquesea')).toBe(DEFAULT_GAME_MODE);
+        expect(normalizeGameMode(undefined)).toBe(DEFAULT_GAME_MODE);
     });
 });
 

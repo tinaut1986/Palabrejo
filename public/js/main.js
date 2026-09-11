@@ -308,10 +308,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             $('round-display').textContent = `Ronda ${data.round}/${totalRounds}`;
 
             rackLetters = data.letters.map(l => canonicalLetter(l));
+            displayLetters = [...data.letters];
             builtWord = [];
-            $('letters-display').innerHTML = data.letters
-                .map(l => `<button type="button" class="letter-tile" data-letter="${l}">${l}</button>`)
-                .join('');
+            renderLetters();
             renderBuiltWord();
 
             // Al reanudar, el servidor devuelve las palabras ya acertadas
@@ -319,8 +318,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 key: canonicalLetter(w.word),
                 word: w.word,
                 type: 'valid',
-                points: w.points
+                points: w.points,
+                palabrejo: w.palabrejo
             }));
+            latestWordKey = null;
             renderMyWords();
             roundScore = myWords.reduce((sum, w) => sum + (w.points || 0), 0);
             updateScorePills();
@@ -331,14 +332,26 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         socket.on('wordResult', (data) => {
             if (data.valid) {
-                addWordChip(data.word, 'valid', data.points);
-                showFeedback(`${data.word.toUpperCase()} +${data.points}`, 'valid');
+                addWordChip(data.word, 'valid', data.points, data.palabrejo);
+                showFeedback(
+                    data.palabrejo
+                        ? `¡PALABREJO! ${data.word.toUpperCase()} +${data.points}`
+                        : `${data.word.toUpperCase()} +${data.points}`,
+                    data.palabrejo ? 'palabrejo' : 'valid'
+                );
                 roundScore += data.points;
                 updateScorePills();
                 flashElement($('built-word'), 'flash-ok');
-                vibrate(15);
+                vibrate(data.palabrejo ? 60 : 15);
             } else {
-                addWordChip(data.word, data.reason === 'duplicate' ? 'duplicate' : 'invalid');
+                // Una palabra repetida ya esta acertada en la lista: se queda
+                // como esta (con sus puntos) y solo se marca como ultima
+                // jugada. El resto de fallos si entran como ficha roja.
+                if (data.reason === 'duplicate') {
+                    markLatest(canonicalLetter(data.word));
+                } else {
+                    addWordChip(data.word, 'invalid');
+                }
                 const msgs = {
                     duplicate: 'Ya usaste esa palabra',
                     used_by_other: 'Otro jugador ya la usó',
@@ -350,6 +363,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             // After trying a word the builder clears for the next one
             clearBuilt();
+        });
+
+        // Alguien ha encontrado un PALABREJO: se avisa a la sala de que el
+        // tablero lo tiene, pero no de cual es. A buscarlo.
+        socket.on('palabrejo', (data) => {
+            // A quien lo ha encontrado ya se lo dice wordResult
+            if (data.playerName === playerDisplayName()) return;
+            showFeedback(`${data.playerName} ha encontrado un PALABREJO (+${data.bonus})`, 'palabrejo');
         });
 
         socket.on('roundEnd', (data) => {
@@ -463,24 +484,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     // alfabético (por su forma canónica, así "á" ordena junto a "a").
     // Reintentar una palabra actualiza su entrada en lugar de duplicarla.
     let myWords = [];
+    // Ultima palabra enviada (acertada, repetida o fallada): lleva el
+    // distintivo hasta que se envie otra
+    let latestWordKey = null;
 
-    function addWordChip(word, type, points = 0) {
+    function markLatest(key) {
+        latestWordKey = key;
+        renderMyWords();
+    }
+
+    function addWordChip(word, type, points = 0, palabrejo = false) {
         const key = canonicalLetter(word);
         const existing = myWords.find(w => w.key === key);
         if (existing) {
             existing.word = word;
             existing.type = type;
             existing.points = points;
+            existing.palabrejo = palabrejo;
         } else {
-            myWords.push({ key, word, type, points });
+            myWords.push({ key, word, type, points, palabrejo });
         }
-        renderMyWords(key);
+        markLatest(key);
     }
 
-    function renderMyWords(highlightKey = null) {
+    function renderMyWords() {
         const sorted = [...myWords].sort((a, b) => a.key.localeCompare(b.key, 'es'));
         $('my-words-list').innerHTML = sorted.map(w => `
-            <span class="word-chip ${w.type}${w.key === highlightKey ? ' just-added' : ''}" data-key="${w.key}">${w.word}${w.type === 'valid' && w.points ? `<small>+${w.points}</small>` : ''}</span>
+            <span class="word-chip ${w.type}${w.palabrejo ? ' palabrejo' : ''}${w.key === latestWordKey ? ' latest' : ''}" data-key="${w.key}">${w.word}${w.type === 'valid' && w.points ? `<small>+${w.points}</small>` : ''}</span>
         `).join('');
         const validCount = myWords.filter(w => w.type === 'valid').length;
         const countEl = $('my-words-count');
@@ -518,6 +548,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // --- WORD BUILDER ---
     let builtWord = [];
     let rackLetters = [];
+    // Las mismas letras, en el orden en que se pintan (el boton de barajar
+    // solo toca esto: el juego sigue siendo el mismo)
+    let displayLetters = [];
 
     // En móvil no hay teclado físico: el texto de ayuda se adapta
     const BUILDER_HINT = window.matchMedia('(hover: hover) and (pointer: fine)').matches
@@ -562,6 +595,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         const cl = canonicalLetter(letter);
         return [...document.querySelectorAll('#letters-display .letter-tile')]
             .find(t => canonicalLetter(t.dataset.letter) === cl);
+    }
+
+    // Las letras del tablero en el orden en que se pintan. Barajarlas no
+    // cambia nada del juego: ayuda a ver combinaciones nuevas.
+    function renderLetters() {
+        $('letters-display').innerHTML = displayLetters
+            .map(l => `<button type="button" class="letter-tile" data-letter="${l}">${l}</button>`)
+            .join('');
+    }
+
+    function shuffleLetters() {
+        for (let i = displayLetters.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [displayLetters[i], displayLetters[j]] = [displayLetters[j], displayLetters[i]];
+        }
+        renderLetters();
+        vibrate(8);
     }
 
     function canonicalLetter(c) {
@@ -610,6 +660,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function handleKeyboardKey(e) {
+        // Con la ficha de informacion abierta, Escape la cierra
+        if (isInfoOpen()) {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                toggleInfo(false);
+            }
+            return;
+        }
         // Con el dialogo abierto, Escape cancela y el resto no llega al juego
         if (isConfirmOpen()) {
             if (e.key === 'Escape') {
@@ -652,8 +710,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // --- WAITING ROOM ---
+    // Descripciones de los modos, para no repetirlas por la interfaz
+    const GAME_MODE_LABELS = {
+        normal: 'Modo normal: todos podéis enviar la misma palabra.',
+        exclusivo: 'Modo exclusivo: cada palabra puntúa solo para quien la envía primero.'
+    };
+
+    // Condiciones con las que se creo la sala: quien entra por un codigo o un
+    // QR no las ha elegido, asi que las ve aqui antes de empezar.
+    function renderRoomSummary(state) {
+        const config = state.config || {};
+        const mode = config.gameMode === 'exclusivo' ? 'Exclusivo' : 'Normal';
+        const rows = [
+            ['Modo', mode],
+            ['Rondas', config.totalRounds],
+            ['Tiempo por ronda', `${config.roundTime}s`],
+            ['Jugadores', `${state.players.length}/${config.maxPlayers}`],
+            ['Sala', config.isPublic ? 'Pública' : 'Privada']
+        ];
+        $('room-summary').innerHTML = `
+            <ul class="summary-list">
+                ${rows.map(([k, v]) => `<li><span>${k}</span><span>${v}</span></li>`).join('')}
+            </ul>
+            <p class="summary-note">${GAME_MODE_LABELS[config.gameMode] || GAME_MODE_LABELS.normal}</p>
+        `;
+    }
+
     function updateWaitingRoom(state) {
         $('room-code-display').textContent = state.code;
+        renderRoomSummary(state);
 
         // Solo play hint
         const soloHint = document.getElementById('solo-hint');
@@ -694,7 +779,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             <div class="room-item" data-code="${r.code}">
                 <div class="room-info">
                     <span class="room-code-label">${r.code}</span>
-                    <span class="room-players">${r.playerCount}/${r.maxPlayers} jugadores</span>
+                    <span class="room-players">${r.playerCount}/${r.maxPlayers} jugadores${r.gameMode === 'exclusivo' ? ' · exclusivo' : ''}</span>
                 </div>
                 <button class="btn-secondary btn-sm" onclick="joinRoom('${r.code}')">Unirse</button>
             </div>
@@ -1042,6 +1127,50 @@ document.addEventListener('DOMContentLoaded', async () => {
         return closeConfirm !== null;
     }
 
+    // --- FICHAS DE INFORMACION ---
+    // Misma tarjeta que el dialogo de confirmacion, pero sin decision que tomar
+    const INFO_SHEETS = {
+        modes: {
+            title: 'Modos de juego',
+            body: `
+                <p><strong>Normal</strong><br>Cada jugador va a lo suyo: varios podéis encontrar la misma palabra y a todos os puntúa.</p>
+                <p><strong>Exclusivo</strong><br>Las palabras se gastan: cada una puntúa solo para quien la envía primero, y al resto se le marca como ya usada.</p>
+            `
+        },
+        rules: {
+            title: 'Cómo se juega',
+            body: `
+                <p>Cada ronda saca un puñado de letras. Forma con ellas todas las palabras que puedas antes de que se acabe el tiempo: puedes repetir una misma letra cuantas veces quieras.</p>
+                <p><strong>Puntuación por longitud</strong></p>
+                <ul class="info-list">
+                    <li><span>3 letras</span><span>1 punto</span></li>
+                    <li><span>4 letras</span><span>2 puntos</span></li>
+                    <li><span>5 letras</span><span>4 puntos</span></li>
+                    <li><span>6 letras</span><span>7 puntos</span></li>
+                    <li><span>7 o más</span><span>10 puntos</span></li>
+                </ul>
+                <p class="info-note"><strong>PALABREJO</strong><br>La palabra que usa <em>todas</em> las letras del tablero suma <strong>+15 puntos</strong> encima de lo que valga por su longitud. Cuando alguien encuentra uno se avisa a la sala, pero no se dice cuál es.</p>
+                <p>Mínimo 3 letras, y tildes y mayúsculas dan igual. No vale repetir una palabra que ya hayas enviado en esa ronda. Al acabar todas las rondas gana quien más puntos lleve.</p>
+                <p>Según el modo de la sala, la misma palabra la podéis encontrar varios o se la queda quien la envía primero.</p>
+            `
+        }
+    };
+
+    function toggleInfo(open, sheet = 'modes') {
+        const overlay = $('info-overlay');
+        if (open) {
+            $('info-title').textContent = INFO_SHEETS[sheet].title;
+            $('info-body').innerHTML = INFO_SHEETS[sheet].body;
+        }
+        overlay.hidden = !open;
+        overlay.classList.toggle('hidden', !open);
+        if (open) $('info-close').focus();
+    }
+
+    function isInfoOpen() {
+        return !$('info-overlay').hidden;
+    }
+
     // Hay partida abierta mientras estemos en una sala que no ha terminado
     function hasOpenGame() {
         return !!currentRoom && currentRoom.gameState !== 'finished';
@@ -1082,6 +1211,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // --- EVENT LISTENERS ---
+
+    $('mode-info-btn').addEventListener('click', () => toggleInfo(true, 'modes'));
+    $('how-to-play-btn').addEventListener('click', () => toggleInfo(true, 'rules'));
+    $('info-close').addEventListener('click', () => toggleInfo(false));
+    $('info-overlay').addEventListener('click', (e) => {
+        if (e.target === $('info-overlay')) toggleInfo(false);
+    });
 
     $('confirm-accept').addEventListener('click', () => closeConfirm && closeConfirm(true));
     $('confirm-cancel').addEventListener('click', () => closeConfirm && closeConfirm(false));
@@ -1196,7 +1332,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             isPublic,
             maxPlayers: parseInt($('max-players').textContent),
             totalRounds: parseInt($('total-rounds').textContent),
-            roundTime: parseInt($('round-time').textContent)
+            roundTime: parseInt($('round-time').textContent),
+            gameMode: $('game-mode').value
         });
         isHost = true;
         setPendingRoom(true);
@@ -1260,6 +1397,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     $('game-exit-btn').addEventListener('click', requestLeaveToLobby);
     $('results-exit-btn').addEventListener('click', requestLeaveToLobby);
+    $('shuffle-btn').addEventListener('click', shuffleLetters);
     $('backspace-btn').addEventListener('click', backspaceBuilt);
     $('clear-btn').addEventListener('click', clearBuilt);
     $('submit-built-btn').addEventListener('click', submitBuild);

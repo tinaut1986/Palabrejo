@@ -49,8 +49,10 @@ if (fs.existsSync(sslKeyPath) && fs.existsSync(sslCertPath)) {
 const {
     LETTER_POOL, MIN_LETTERS, MAX_LETTERS, DEFAULT_ROUNDS, DEFAULT_MAX_PLAYERS,
     MIN_WORD_LENGTH, DEFAULT_ROUND_TIME, NEXT_GAME_DELAY_MS, MIN_VOWELS, VOWELS,
-    MIN_PLAYABLE_WORDS, MAX_LETTER_ROLL_ATTEMPTS,
+    MIN_PLAYABLE_WORDS, MAX_LETTER_ROLL_ATTEMPTS, PALABREJO_BONUS,
+    DEFAULT_GAME_MODE, normalizeGameMode,
     calculateScore,
+    isPalabrejo,
     normalizeForMatch,
     sanitizeGuestName,
     generateLetters: _generateLetters,
@@ -568,7 +570,7 @@ function getRoomStateForClient(room) {
             isHost: p.isHost,
             isGuest: p.isGuest,
             wordsThisRound: Array.from(p.wordsThisRound || []),
-            roundScore: Array.from(p.wordsThisRound || []).reduce((sum, w) => sum + calculateScore(w), 0)
+            roundScore: Array.from(p.wordsThisRound || []).reduce((sum, w) => sum + calculateScore(w, room.currentLetters), 0)
         })),
         gameState: room.gameState,
         hostId: room.hostId,
@@ -576,7 +578,8 @@ function getRoomStateForClient(room) {
             maxPlayers: room.maxPlayers,
             totalRounds: room.totalRounds,
             roundTime: room.roundTime,
-            isPublic: room.isPublic
+            isPublic: room.isPublic,
+            gameMode: room.gameMode || DEFAULT_GAME_MODE
         },
         currentRound: room.currentRound,
         totalRounds: room.totalRounds,
@@ -591,6 +594,7 @@ function getPublicRooms() {
             code: room.code,
             playerCount: room.players.length,
             maxPlayers: room.maxPlayers,
+            gameMode: room.gameMode || DEFAULT_GAME_MODE,
             players: room.players.map(p => p.name)
         }));
 }
@@ -680,7 +684,7 @@ function detachSocketFromRooms(socket) {
 io.on('connection', (socket) => {
     console.log(`Connected: ${socket.id}`);
 
-    socket.on('createRoom', async ({ playerName, isPublic, maxPlayers, totalRounds, roundTime, sessionToken }) => {
+    socket.on('createRoom', async ({ playerName, isPublic, maxPlayers, totalRounds, roundTime, gameMode, sessionToken }) => {
         const player = await resolvePlayer(sessionToken, playerName);
         if (player.expired) return emitSessionExpired(socket);
         if (player.error) return socket.emit('error', player.error);
@@ -691,6 +695,7 @@ io.on('connection', (socket) => {
         const clampedMax = Math.min(Math.max(maxPlayers || DEFAULT_MAX_PLAYERS, 2), 12);
         const clampedRounds = Math.min(Math.max(totalRounds || DEFAULT_ROUNDS, 1), 15);
         const clampedTime = Math.min(Math.max(roundTime || DEFAULT_ROUND_TIME, 30), 180);
+        const mode = normalizeGameMode(gameMode);
 
         rooms[roomCode] = {
             code: roomCode,
@@ -701,6 +706,7 @@ io.on('connection', (socket) => {
             maxPlayers: clampedMax,
             totalRounds: clampedRounds,
             roundTime: clampedTime,
+            gameMode: mode,
             currentRound: 0,
             currentLetters: [],
             roundTimer: null,
@@ -801,7 +807,8 @@ io.on('connection', (socket) => {
                 // Palabras ya acertadas en esta ronda, para repoblar la lista
                 words: Array.from(player.wordsThisRound).map(w => ({
                     word: w,
-                    points: calculateScore(w)
+                    points: calculateScore(w, room.currentLetters),
+                    palabrejo: isPalabrejo(w, room.currentLetters)
                 }))
             });
         }
@@ -829,7 +836,12 @@ io.on('connection', (socket) => {
         startRound(roomCode);
     });
 
-    socket.on('submitWord', ({ word }) => {
+    socket.on('submitWord', (payload) => {
+        // Lo que llega por el socket puede ser cualquier cosa: sin este filtro,
+        // un cliente cualquiera tumba el servidor mandando algo que no sea texto
+        const word = typeof payload?.word === 'string' ? payload.word : null;
+        if (!word) return;
+
         const roomCode = findRoomBySocket(socket.id);
         if (!roomCode) return;
         const room = rooms[roomCode];
@@ -852,21 +864,30 @@ io.on('connection', (socket) => {
             return socket.emit('wordResult', { word: cleanWord, valid: false, reason: 'invalid', points: 0 });
         }
 
-        const roundKey = `${roomCode}_r${room.currentRound}`;
-        if (!room.usedWords[roundKey]) room.usedWords[roundKey] = new Set();
-        if (room.usedWords[roundKey].has(wordKey)) {
-            return socket.emit('wordResult', { word: cleanWord, valid: false, reason: 'used_by_other', points: 0 });
+        // En modo exclusivo la palabra se la queda quien la manda primero; en
+        // el normal cada jugador va a lo suyo y todos pueden encontrarla.
+        if (room.gameMode === 'exclusivo') {
+            const roundKey = `${roomCode}_r${room.currentRound}`;
+            if (!room.usedWords[roundKey]) room.usedWords[roundKey] = new Set();
+            if (room.usedWords[roundKey].has(wordKey)) {
+                return socket.emit('wordResult', { word: cleanWord, valid: false, reason: 'used_by_other', points: 0 });
+            }
+            room.usedWords[roundKey].add(wordKey);
         }
-
-        room.usedWords[roundKey].add(wordKey);
         player.wordsThisRound.add(wordKey);
         player.wordsFound.push(cleanWord);
 
-        const points = calculateScore(cleanWord);
+        const palabrejo = isPalabrejo(cleanWord, room.currentLetters);
+        const points = calculateScore(cleanWord, room.currentLetters);
         player.score += points;
         player.totalWordsFound++;
 
-        socket.emit('wordResult', { word: cleanWord, valid: true, reason: 'ok', points });
+        socket.emit('wordResult', { word: cleanWord, valid: true, reason: 'ok', points, palabrejo });
+        // El PALABREJO es la jugada de la ronda y se anuncia a la sala, pero
+        // sin decir cual es: que cada cual la busque por su cuenta.
+        if (palabrejo) {
+            io.to(roomCode).emit('palabrejo', { playerName: player.name, bonus: PALABREJO_BONUS });
+        }
         broadcastRoomState(roomCode);
     });
 
@@ -992,7 +1013,7 @@ function endRound(roomCode) {
         id: p.id,
         name: p.name,
         wordsThisRound: Array.from(p.wordsThisRound),
-        scoreThisRound: Array.from(p.wordsThisRound).reduce((sum, w) => sum + calculateScore(w), 0),
+        scoreThisRound: Array.from(p.wordsThisRound).reduce((sum, w) => sum + calculateScore(w, room.currentLetters), 0),
         totalScore: p.score
     }));
 

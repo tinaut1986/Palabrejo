@@ -297,6 +297,38 @@ input::placeholder { color: var(--text-dim); }
     padding: 6px 0;
 }
 .config-row label { font-size: 0.9rem; color: var(--text-dim); }
+
+/* El nombre del modo dice poco por si solo: al lado va la chincheta de ayuda */
+.config-row label { display: flex; align-items: center; gap: 8px; }
+.info-btn {
+    width: 20px;
+    height: 20px;
+    flex: none;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    font-family: Georgia, 'Times New Roman', serif;
+    font-style: italic;
+    font-size: 0.8rem;
+    line-height: 1;
+    cursor: pointer;
+}
+.info-btn:hover {
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+.config-row select {
+    max-width: 50%;
+    padding: 6px 8px;
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.85rem;
+}
 .stepper {
     display: flex;
     align-items: center;
@@ -684,17 +716,17 @@ button.letter-tile:active { transform: scale(0.92); }
     background: var(--accent);
     animation: chipShake 0.3s ease;
 }
-.word-chip.duplicate {
-    background: var(--yellow);
-}
 .word-chip small {
     font-weight: 800;
     opacity: 0.65;
     margin-left: 4px;
     font-size: 0.72em;
 }
-/* La lista se reordena alfabéticamente: un destello marca la recién añadida */
-.word-chip.just-added {
+/* La lista se reordena alfabéticamente, asi que la ultima palabra enviada
+   lleva un aro que la señala hasta que se envie otra */
+.word-chip.latest {
+    outline: 2px solid var(--text);
+    outline-offset: 2px;
     animation: chipIn 0.3s ease, chipGlow 0.9s ease;
 }
 @keyframes chipGlow {
@@ -786,6 +818,7 @@ button.letter-tile:active { transform: scale(0.92); }
 .feedback.valid { background: var(--green); color: var(--bg-primary); }
 .feedback.invalid { background: var(--accent); color: white; }
 .feedback.duplicate { background: var(--yellow); color: var(--bg-primary); }
+.feedback.palabrejo { background: var(--yellow); color: var(--bg-primary); font-weight: 700; }
 
 @keyframes feedbackIn {
     from { transform: translateX(-50%) translateY(-16px); opacity: 0; }
@@ -1108,3 +1141,84 @@ button.letter-tile:active { transform: scale(0.92); }
 }
 
 #profile-friend-action { margin-top: 12px; }
+
+/* PALABREJO: la palabra que usa todas las letras del tablero */
+.word-chip.palabrejo {
+    background: var(--yellow);
+    color: var(--bg-primary);
+    font-weight: 700;
+    box-shadow: 0 0 0 2px var(--yellow);
+}
+
+/* Ficha de informacion: misma tarjeta que el dialogo de confirmacion, pero con
+   el texto alineado a la izquierda, que aqui se lee, no se decide */
+.info-card { max-width: 420px; text-align: left; }
+.info-card h3 { text-align: center; }
+.info-body {
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    line-height: 1.5;
+    margin-bottom: 20px;
+}
+.info-body p { margin-bottom: 12px; }
+.info-body strong { color: var(--text); }
+.info-note {
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 0;
+}
+
+/* Tabla de puntos: concepto a la izquierda, valor a la derecha */
+.info-list {
+    list-style: none;
+    margin: 0 0 12px;
+}
+.info-list li {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+}
+.info-list li span:last-child {
+    color: var(--text);
+    font-weight: 700;
+}
+
+/* La ficha de reglas es larga: que no se salga de la pantalla */
+.info-body {
+    max-height: 60vh;
+    overflow-y: auto;
+}
+.info-note strong:first-child { color: var(--yellow); }
+
+/* Resumen de las condiciones de la sala, en la sala de espera */
+.room-summary {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    text-align: left;
+}
+.summary-list {
+    list-style: none;
+    margin: 0;
+}
+.summary-list li {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 4px 0;
+    font-size: 0.85rem;
+    color: var(--text-dim);
+}
+.summary-list li span:last-child {
+    color: var(--text);
+    font-weight: 700;
+}
+.summary-note {
+    border-top: 1px solid var(--border);
+    margin-top: 8px;
+    padding-top: 8px;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+}
