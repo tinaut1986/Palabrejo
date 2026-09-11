@@ -92,6 +92,13 @@ const NEXT_GAME_DELAY_MS = 20 * 1000;
 const MIN_VOWELS = 2;
 const VOWELS = ['A', 'E', 'I', 'O', 'U'];
 
+// Una mano sin apenas palabras jugables no tiene gracia: antes de empezar (y
+// en cada ronda) se descarta un rack que rinda menos palabras que este minimo.
+// Se prueban hasta MAX_LETTER_ROLL_ATTEMPTS juegos de letras y, si ninguno
+// alcanza el minimo, se usa el mejor de los probados para no bloquear la sala.
+const MIN_PLAYABLE_WORDS = 30;
+const MAX_LETTER_ROLL_ATTEMPTS = 20;
+
 // Scoring: longer words are worth exponentially more
 function calculateScore(word) {
     const len = word.length;
@@ -651,6 +658,37 @@ function isWordValid(word, letters) {
     return true;
 }
 
+// Cuenta cuantas palabras del diccionario pueden formarse con un rack dado.
+// Reproduce la misma logica que isWordValid: cada letra del rack puede
+// reutilizarse, y se mira la forma canónica (sin acentos, con ñ).
+function countPlayableWords(letters) {
+    const letterSet = new Set(letters.map(l => normalizeForMatch(l)));
+    let count = 0;
+    for (const canonical of validWordsCanonical) {
+        if (canonical.length < MIN_WORD_LENGTH) continue;
+        let ok = true;
+        for (let i = 0; i < canonical.length; i++) {
+            if (!letterSet.has(canonical[i])) { ok = false; break; }
+        }
+        if (ok) count++;
+    }
+    return count;
+}
+
+// Elige un juego de letras con garantia de palabras jugables: prueba varios
+// racks al azar y se queda con el primero que pase el minimo (o el mejor
+// hallazgo si ninguno llega, para no bloquear la sala nunca).
+function selectPlayableLetters(count) {
+    let best = null;
+    for (let i = 0; i < MAX_LETTER_ROLL_ATTEMPTS; i++) {
+        const letters = generateLetters(count);
+        const words = countPlayableWords(letters);
+        if (!best || words > best.words) best = { letters, words };
+        if (words >= MIN_PLAYABLE_WORDS) break;
+    }
+    return best.letters;
+}
+
 function getRoomStateForClient(room) {
     return {
         code: room.code,
@@ -1060,7 +1098,7 @@ function startRound(roomCode) {
     if (!room) return;
 
     const letterCount = MIN_LETTERS + Math.floor(Math.random() * (MAX_LETTERS - MIN_LETTERS + 1));
-    room.currentLetters = generateLetters(letterCount);
+    room.currentLetters = selectPlayableLetters(letterCount);
     room.roundEnded = false;
     room.roundEndsAt = Date.now() + room.roundTime * 1000;
 
