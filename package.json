@@ -4,16 +4,25 @@
   "description": "Juego multijugador de formación de palabras en español",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "DB_HOST=${DB_HOST:-127.0.0.1} jest --runInBand"
+  },
+  "jest": {
+    "setupFilesAfterEnv": [
+      "<rootDir>/jest.setup.js"
+    ]
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "type": "commonjs",
   "dependencies": {
+    "bcryptjs": "^2.4.3",
     "express": "^5.1.0",
     "mysql2": "^3.14.3",
-    "socket.io": "^4.8.1",
-    "bcryptjs": "^2.4.3"
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "jest": "^30.5.1"
   }
 }

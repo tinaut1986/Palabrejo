@@ -45,69 +45,19 @@ if (fs.existsSync(sslKeyPath) && fs.existsSync(sslCertPath)) {
     io = new Server(server);
 }
 
-// --- LETTER POOL ---
-// Weighted by frequency in Spanish
-const LETTER_POOL = [
-    'A','A','A','A','A','A','A','A',
-    'B','B',
-    'C','C','C',
-    'D','D','D',
-    'E','E','E','E','E','E','E','E','E','E',
-    'F','F',
-    'G','G',
-    'H','H',
-    'I','I','I','I','I','I','I',
-    'J',
-    'K',
-    'L','L','L','L',
-    'M','M','M',
-    'N','N','N','N','N','N',
-    'Ñ','Ñ',
-    'O','O','O','O','O','O','O','O',
-    'P','P','P',
-    'Q',
-    'R','R','R','R','R','R',
-    'S','S','S','S','S','S','S',
-    'T','T','T','T','T',
-    'U','U','U','U',
-    'V','V',
-    'W',
-    'X',
-    'Y','Y',
-    'Z'
-];
-
-// --- GAME CONSTANTS ---
-const MIN_LETTERS = 6;
-const MAX_LETTERS = 8;
-const DEFAULT_ROUNDS = 5;
-const DEFAULT_MAX_PLAYERS = 8;
-const MIN_WORD_LENGTH = 3;
-const DEFAULT_ROUND_TIME = 90;
-
-// Descanso entre partidas completas: tras el fin de la ultima ronda se espera
-// este tiempo y arranca una partida nueva con las mismas condiciones y los
-// jugadores que sigan en sala.
-const NEXT_GAME_DELAY_MS = 20 * 1000;
-const MIN_VOWELS = 2;
-const VOWELS = ['A', 'E', 'I', 'O', 'U'];
-
-// Una mano sin apenas palabras jugables no tiene gracia: antes de empezar (y
-// en cada ronda) se descarta un rack que rinda menos palabras que este minimo.
-// Se prueban hasta MAX_LETTER_ROLL_ATTEMPTS juegos de letras y, si ninguno
-// alcanza el minimo, se usa el mejor de los probados para no bloquear la sala.
-const MIN_PLAYABLE_WORDS = 30;
-const MAX_LETTER_ROLL_ATTEMPTS = 20;
-
-// Scoring: longer words are worth exponentially more
-function calculateScore(word) {
-    const len = word.length;
-    if (len === 3) return 1;
-    if (len === 4) return 2;
-    if (len === 5) return 4;
-    if (len === 6) return 7;
-    return 10; // 7+ letters
-}
+// --- GAME LOGIC (pure functions and constants, unit-testable) ---
+const {
+    LETTER_POOL, MIN_LETTERS, MAX_LETTERS, DEFAULT_ROUNDS, DEFAULT_MAX_PLAYERS,
+    MIN_WORD_LENGTH, DEFAULT_ROUND_TIME, NEXT_GAME_DELAY_MS, MIN_VOWELS, VOWELS,
+    MIN_PLAYABLE_WORDS, MAX_LETTER_ROLL_ATTEMPTS,
+    calculateScore,
+    normalizeForMatch,
+    sanitizeGuestName,
+    generateLetters: _generateLetters,
+    countPlayableWords: _countPlayableWords,
+    selectPlayableLetters: _selectPlayableLetters,
+    isWordValid: _isWordValid
+} = require('./lib/game-logic');
 
 // --- IN-MEMORY STORAGE ---
 let rooms = {};
@@ -587,106 +537,24 @@ function generateRoomCode() {
     return code;
 }
 
-// Generate `count` DISTINCT letters (each letter appears once on the rack and
-// can be used as many times as the player wants). At least MIN_VOWELS vowels.
-function generateLetters(count) {
-    const letters = [];
-    const used = new Set();
-    const pool = [...LETTER_POOL];
-    let guard = 0;
-    while (letters.length < count && guard < 500) {
-        guard++;
-        const idx = Math.floor(Math.random() * pool.length);
-        const l = pool[idx];
-        if (!used.has(l)) {
-            used.add(l);
-            letters.push(l);
-        }
-    }
-    // Fill any remaining slots from the distinct letters not already picked
-    const remaining = Array.from(new Set(LETTER_POOL)).filter(l => !used.has(l));
-    while (letters.length < count && remaining.length) {
-        const i = Math.floor(Math.random() * remaining.length);
-        const l = remaining.splice(i, 1)[0];
-        used.add(l);
-        letters.push(l);
-    }
-    // Guarantee at least MIN_VOWELS vowels, swapping consonants when needed
-    const vowelSet = new Set(VOWELS);
-    let vowels = letters.filter(l => vowelSet.has(l)).length;
-    const shuffledVowels = [...VOWELS].sort(() => Math.random() - 0.5);
-    let vi = 0;
-    for (let i = 0; i < letters.length && vowels < MIN_VOWELS; i++) {
-        if (vowelSet.has(letters[i])) continue;
-        const cand = shuffledVowels[vi++ % shuffledVowels.length];
-        if (!used.has(cand)) {
-            used.delete(letters[i]);
-            letters[i] = cand;
-            used.add(cand);
-            vowels++;
-        }
-    }
-    return letters;
-}
+// --- WRAPPERS (certifican el diccionario en memoria) ---
+// generateLetters, normalizeForMatch y calculateScore se usan tal cual desde
+// lib/game-logic.js; las de abajo le adjuntan el diccionario cargado.
 
-// Canonical form for comparisons: accents/marks are stripped but Ñ is kept as a
-// distinct letter (e.g. "café" -> "cafe", "moño" -> "moño", "Ñoño" -> "ñoño").
-// This is what lets words with/without accents be treated as the same word
-// while ñ vs n remain different words.
-function normalizeForMatch(str) {
-    return str.normalize('NFD')
-        .replace(/n\u0303/gi, 'ñ')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase();
+function generateLetters(count) {
+    return _generateLetters(count);
 }
 
 function isWordValid(word, letters) {
-    const wordLower = word.toLowerCase();
-    if (wordLower.length < MIN_WORD_LENGTH) return false;
-
-    // Dict lookup uses the canonical form: words with/without accents are the
-    // same word; ñ stays distinct from n.
-    const canonical = normalizeForMatch(wordLower);
-    if (!validWordsCanonical.has(canonical)) return false;
-
-    // The word's letters (canonical, accent-free, ñ kept) must be a subset of
-    // the rack letters. Each rack letter appears once but can be reused freely.
-    const letterSet = new Set(letters.map(l => normalizeForMatch(l)));
-    for (const c of canonical) {
-        if (!letterSet.has(c)) return false;
-    }
-    return true;
+    return _isWordValid(word, letters, { validWordsCanonical });
 }
 
-// Cuenta cuantas palabras del diccionario pueden formarse con un rack dado.
-// Reproduce la misma logica que isWordValid: cada letra del rack puede
-// reutilizarse, y se mira la forma canónica (sin acentos, con ñ).
 function countPlayableWords(letters) {
-    const letterSet = new Set(letters.map(l => normalizeForMatch(l)));
-    let count = 0;
-    for (const canonical of validWordsCanonical) {
-        if (canonical.length < MIN_WORD_LENGTH) continue;
-        let ok = true;
-        for (let i = 0; i < canonical.length; i++) {
-            if (!letterSet.has(canonical[i])) { ok = false; break; }
-        }
-        if (ok) count++;
-    }
-    return count;
+    return _countPlayableWords(letters, { validWordsCanonical });
 }
 
-// Elige un juego de letras con garantia de palabras jugables: prueba varios
-// racks al azar y se queda con el primero que pase el minimo (o el mejor
-// hallazgo si ninguno llega, para no bloquear la sala nunca).
 function selectPlayableLetters(count) {
-    let best = null;
-    for (let i = 0; i < MAX_LETTER_ROLL_ATTEMPTS; i++) {
-        const letters = generateLetters(count);
-        const words = countPlayableWords(letters);
-        if (!best || words > best.words) best = { letters, words };
-        if (words >= MIN_PLAYABLE_WORDS) break;
-    }
-    return best.letters;
+    return _selectPlayableLetters(count, { validWordsCanonical });
 }
 
 function getRoomStateForClient(room) {
@@ -749,12 +617,6 @@ async function resolveIdentity(sessionToken) {
 // olvidar la sesion guardada y volver a la pantalla de acceso
 function emitSessionExpired(socket) {
     socket.emit('sessionExpired', 'Tu sesión ha caducado. Vuelve a iniciar sesión.');
-}
-
-// Nombre de invitado: se limpia aqui porque llega tal cual del cliente
-function sanitizeGuestName(name) {
-    const clean = String(name || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 20);
-    return clean.length >= 2 ? clean : 'Invitado';
 }
 
 // Los nombres registrados estan reservados: un invitado no puede presentarse
