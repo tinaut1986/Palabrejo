@@ -1,4 +1,4 @@
--- Palabrero: amistades entre usuarios registrados
+-- Palabrejo: amistades entre usuarios registrados
 
 -- Una fila por relacion, guardada en el sentido en que se pidio. Los amigos de
 -- X son las filas aceptadas donde X es requester o addressee, asi que no hace

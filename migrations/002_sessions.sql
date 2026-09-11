@@ -1,4 +1,4 @@
--- Palabrero: soporte de sesiones firmadas
+-- Palabrejo: soporte de sesiones firmadas
 
 -- Ajustes internos del servidor (entre ellos el secreto de firma de sesiones).
 -- Vive en la base de datos para que los tokens sigan siendo validos despues de

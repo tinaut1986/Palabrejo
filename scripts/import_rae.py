@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Import Spanish RAE words into Palabrero's MariaDB.
+Import Spanish RAE words into Palabrejo's MariaDB.
 
 Pipeline:
   1. Download raw RAE file (JorgeDuenasLerin/diccionario-espanol-txt, allwords.txt)
@@ -134,7 +134,7 @@ def import_chunks(chunks, client):
     host = os.environ.get("DB_HOST", cfg.get("host", "localhost"))
     user = cfg.get("user", "root")
     password = cfg.get("password", "")
-    database = cfg.get("database", "palabrero_db")
+    database = cfg.get("database", "palabrejo_db")
     print(f"Importing into {database}@{host} as {user} ...")
     for i, chunk in enumerate(chunks):
         proc = subprocess.Popen(

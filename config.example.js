@@ -2,7 +2,7 @@
 // config.js esta en .gitignore: nunca subas credenciales al repositorio.
 module.exports = {
   host: 'db',
-  user: 'palabrero_user',
+  user: 'palabrejo_user',
   password: 'cambia-esta-password',
-  database: 'palabrero_db'
+  database: 'palabrejo_db'
 };

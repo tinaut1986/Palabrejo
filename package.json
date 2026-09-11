@@ -1,5 +1,5 @@
 {
-  "name": "palabrero",
+  "name": "palabrejo",
   "version": "1.0.0",
   "description": "Juego multijugador de formación de palabras en español",
   "main": "server.js",

@@ -1167,7 +1167,7 @@ async function startServer() {
     const protocol = server instanceof https.Server ? 'https' : 'http';
 
     server.listen(activePort, () => {
-        console.log(`\nPalabrero running on ${protocol}://localhost:${activePort}`);
+        console.log(`\nPalabrejo running on ${protocol}://localhost:${activePort}`);
         console.log("Ready to accept connections.");
     });
 }

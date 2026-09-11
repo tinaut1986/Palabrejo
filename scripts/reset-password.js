@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Restablece la contrasena de un usuario desde el servidor.
 //
-//   docker exec -it palabrero_server node scripts/reset-password.js <usuario>
-//   docker exec -it palabrero_server node scripts/reset-password.js <usuario> --random
-//   docker exec -it palabrero_server node scripts/reset-password.js <usuario> --logout-all
-//   docker exec -it palabrero_server node scripts/reset-password.js --list
+//   docker exec -it palabrejo_server node scripts/reset-password.js <usuario>
+//   docker exec -it palabrejo_server node scripts/reset-password.js <usuario> --random
+//   docker exec -it palabrejo_server node scripts/reset-password.js <usuario> --logout-all
+//   docker exec -it palabrejo_server node scripts/reset-password.js --list
 //
 // Al cambiar la contrasena se incrementa users.token_version, de modo que todas
 // las sesiones abiertas de ese usuario quedan invalidadas: quien estuviera

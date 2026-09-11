@@ -1,4 +1,4 @@
--- Palabrero: permite invalidar sesiones abiertas
+-- Palabrejo: permite invalidar sesiones abiertas
 
 -- Los tokens de sesion van firmados y no se consultan en base de datos, asi
 -- que por si solos no se pueden revocar. Incluyendo esta version en el token y

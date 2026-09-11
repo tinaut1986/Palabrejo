@@ -1,4 +1,4 @@
--- Palabrero: diccionario español (RAE) — 108648 palabras
+-- Palabrejo: diccionario español (RAE) — 108648 palabras
 -- Generado desde la tabla `words`. Idempotente: INSERT IGNORE.
 -- Regenerable con: python3 scripts/import_rae.py --download
 

@@ -5,7 +5,7 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${GREEN}--- Starting the setup script for 'Palabrero' ---${NC}"
+echo -e "${GREEN}--- Starting the setup script for 'Palabrejo' ---${NC}"
 
 echo -e "\n${YELLOW}[1/4] Checking for Node.js and npm...${NC}"
 if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then

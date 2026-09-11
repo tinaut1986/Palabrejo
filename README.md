@@ -1,4 +1,4 @@
-# Palabrero
+# Palabrejo
 
 Juego web multijugador y competitivo de formar palabras en español. Cada ronda
 reparte un puñado de letras y todos los jugadores compiten, en tiempo real, por
@@ -31,8 +31,8 @@ Las palabras se validan contra un diccionario de ~108.000 palabras del español
 
 ```bash
 cp config.example.js config.js   # ajusta host/usuario/password/base de datos
-docker build -t palabrero .
-docker run -p 3000:3000 -v "$PWD/config.js:/app/config.js:ro" palabrero
+docker build -t palabrejo .
+docker run -p 3000:3000 -v "$PWD/config.js:/app/config.js:ro" palabrejo
 ```
 
 ### En local
@@ -88,9 +88,9 @@ No hay recuperación automática (el juego no pide email a nadie). La restablece
 el administrador desde el servidor:
 
 ```bash
-docker exec -it palabrero_server node scripts/reset-password.js --list
-docker exec -it palabrero_server node scripts/reset-password.js <usuario>
-docker exec -it palabrero_server node scripts/reset-password.js <usuario> --random
+docker exec -it palabrejo_server node scripts/reset-password.js --list
+docker exec -it palabrejo_server node scripts/reset-password.js <usuario>
+docker exec -it palabrejo_server node scripts/reset-password.js <usuario> --random
 ```
 
 Sin `--random` pide la contraseña por teclado, sin mostrarla. Con `--random`
@@ -101,7 +101,7 @@ Como las sesiones no caducan solas, `--logout-all` las cierra sin cambiar la
 contraseña — para echar a un dispositivo perdido:
 
 ```bash
-docker exec -it palabrero_server node scripts/reset-password.js <usuario> --logout-all
+docker exec -it palabrejo_server node scripts/reset-password.js <usuario> --logout-all
 ```
 
 ## Amigos

@@ -114,20 +114,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     // --- RESUME STORAGE ---
     // Survives a page reload so a player can get back into an in-progress game.
     function saveResume(roomCode, token) {
-        try { sessionStorage.setItem('palabreroResume', JSON.stringify({ code: roomCode, token })); } catch (e) {}
+        try { sessionStorage.setItem('palabrejoResume', JSON.stringify({ code: roomCode, token })); } catch (e) {}
     }
     function readResume() {
-        try { return JSON.parse(sessionStorage.getItem('palabreroResume') || 'null'); } catch (e) { return null; }
+        try { return JSON.parse(sessionStorage.getItem('palabrejoResume') || 'null'); } catch (e) { return null; }
     }
     function clearResume() {
-        try { sessionStorage.removeItem('palabreroResume'); } catch (e) {}
+        try { sessionStorage.removeItem('palabrejoResume'); } catch (e) {}
     }
 
     // --- IDENTIDAD PERSISTENTE ---
     // Recuerda con quien se jugo la ultima vez (registrado o invitado) para no
     // tener que volver a presentarse. En localStorage, asi que sobrevive a
     // cerrar el navegador, al contrario que el token de reanudacion de partida.
-    const IDENTITY_KEY = 'palabreroIdentity';
+    const IDENTITY_KEY = 'palabrejoIdentity';
 
     function saveIdentity() {
         try {
