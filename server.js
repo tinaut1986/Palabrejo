@@ -84,6 +84,11 @@ const DEFAULT_ROUNDS = 5;
 const DEFAULT_MAX_PLAYERS = 8;
 const MIN_WORD_LENGTH = 3;
 const DEFAULT_ROUND_TIME = 90;
+
+// Descanso entre partidas completas: tras el fin de la ultima ronda se espera
+// este tiempo y arranca una partida nueva con las mismas condiciones y los
+// jugadores que sigan en sala.
+const NEXT_GAME_DELAY_MS = 20 * 1000;
 const MIN_VOWELS = 2;
 const VOWELS = ['A', 'E', 'I', 'O', 'U'];
 
@@ -756,6 +761,7 @@ function detachSocketFromRooms(socket) {
         if (room.players.length === 0) {
             if (room.roundTimer) clearTimeout(room.roundTimer);
             if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
+            if (room.restTimer) clearTimeout(room.restTimer);
             delete rooms[roomCode];
             if (room.isPublic) broadcastPublicRooms();
             continue;
@@ -801,7 +807,9 @@ io.on('connection', (socket) => {
             roundEndsAt: 0,
             roundEnded: false,
             usedWords: {},
-            cleanupTimer: null
+            cleanupTimer: null,
+            restTimer: null,
+            restEndsAt: 0
         };
 
         const token = crypto.randomBytes(16).toString('hex');
@@ -874,7 +882,7 @@ io.on('connection', (socket) => {
         // conservaba la insignia pero perdia sus permisos
         if (player.isHost) room.hostId = socket.id;
 
-        if (room.gameState === 'finished') {
+        if (room.gameState !== 'waiting' && room.gameState !== 'playing' && room.gameState !== 'rest') {
             socket.emit('error', 'La partida ya ha terminado.');
             return;
         }
@@ -896,6 +904,11 @@ io.on('connection', (socket) => {
                     points: calculateScore(w)
                 }))
             });
+        }
+        if (room.gameState === 'rest' && room.restTimer) {
+            // Quien vuelve durante el descanso recupera la cuenta atras hacia
+            // la siguiente partida, con el tiempo restante real.
+            socket.emit('restStart', { delay: Math.max(1000, room.restEndsAt - Date.now()) });
         }
         if (room.isPublic) broadcastPublicRooms();
     });
@@ -1101,7 +1114,7 @@ async function endGame(roomCode) {
     const room = rooms[roomCode];
     if (!room) return;
 
-    room.gameState = 'finished';
+    room.gameState = 'rest';
 
     const sorted = [...room.players].sort((a, b) => b.score - a.score);
     const winner = sorted[0];
@@ -1148,13 +1161,48 @@ async function endGame(roomCode) {
         console.error("Error persisting game results:", error);
     }
 
-    // Clean up after delay
-    setTimeout(() => {
-        if (rooms[roomCode]) {
-            if (rooms[roomCode].roundTimer) clearTimeout(rooms[roomCode].roundTimer);
-            delete rooms[roomCode];
-        }
-    }, 30000);
+    // Descanso y arranque automatico de una partida nueva con la misma gente
+    // y las mismas condiciones, mientras queden jugadores en la sala.
+    room.restEndsAt = Date.now() + NEXT_GAME_DELAY_MS;
+    room.restTimer = setTimeout(() => startNewGame(roomCode), NEXT_GAME_DELAY_MS);
+
+    io.to(roomCode).emit('restStart', {
+        delay: NEXT_GAME_DELAY_MS,
+        roundTime: room.roundTime,
+        totalRounds: room.totalRounds
+    });
+}
+
+// Arranca una partida nueva en la misma sala, con las mismas condiciones y los
+// jugadores que sigan dentro tras el descanso. Vacia el marcador y las listas
+// de palabras para que la partida empiece de cero.
+function startNewGame(roomCode) {
+    const room = rooms[roomCode];
+    if (!room) return;
+
+    room.restTimer = null;
+    room.restEndsAt = 0;
+
+    // Si ya no queda nadie en sala durante el descanso, se cierra la partida.
+    if (!room.players.some(p => !p.disconnected)) {
+        if (room.roundTimer) clearTimeout(room.roundTimer);
+        if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
+        delete rooms[roomCode];
+        if (room.isPublic) broadcastPublicRooms();
+        return;
+    }
+
+    room.gameState = 'playing';
+    room.currentRound = 1;
+    room.usedWords = {};
+    room.players.forEach(p => {
+        p.score = 0;
+        p.totalWordsFound = 0;
+        p.wordsFound = [];
+        p.wordsThisRound = new Set();
+    });
+
+    startRound(roomCode);
 }
 
 // --- SERVER INIT ---

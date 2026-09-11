@@ -80,6 +80,16 @@ h2 { font-size: 1.5rem; margin-bottom: 8px; }
     font-size: 0.9rem;
 }
 
+.rest-countdown .rest-countdown-num {
+    display: block;
+    font-size: 4.5rem;
+    font-weight: 900;
+    line-height: 1.1;
+    margin: 12px 0 8px;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+}
+
 /* Icon */
 .game-icon-container {
     margin-bottom: 12px;

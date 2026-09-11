@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let roundTimer = null;
     let timeLeft = 0;
     let nextTimer = null;
+    let restTimer = null;
     let roundScore = 0; // puntos de la ronda en curso (mío)
     let lastQrUrl = null; // ultimo QR pintado, para no regenerarlo sin motivo
     let pendingRoom = false; // esperando que el servidor confirme sala creada/unida
@@ -299,6 +300,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         socket.on('roundStart', (data) => {
             stopNextTimer();
+            stopRestTimer();
             showView('game-view');
             // El total de rondas viene en el evento: al reanudar tras un F5
             // puede que aún no tengamos el estado de la sala.
@@ -359,8 +361,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             stopTimer();
             stopNextTimer();
             // La partida ha terminado: salir ya no pide confirmacion
-            if (currentRoom) currentRoom.gameState = 'finished';
+            if (currentRoom) currentRoom.gameState = 'rest';
             showGameOver(data);
+        });
+
+        // Tras el fin de la partida hay un descanso y arranca otra nueva con
+        // los mismos jugadores. El servidor lo confirma con esta cuenta atras.
+        socket.on('restStart', (data) => {
+            stopNextTimer();
+            showView('game-over-view');
+            startRestCountdown(data.delay);
         });
 
         socket.on('publicRoomsList', (rooms) => {
@@ -411,6 +421,32 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (nextTimer) {
             clearInterval(nextTimer);
             nextTimer = null;
+        }
+    }
+
+    // Cuenta atras del descanso entre partidas: muestra en la pantalla de fin
+    // el tiempo que falta para que arranque la siguiente partida.
+    function startRestCountdown(delayMs) {
+        stopRestTimer();
+        const el = $('game-over-next');
+        if (!el) return;
+        let s = Math.max(1, Math.ceil(delayMs / 1000));
+        el.innerHTML = `Nueva partida en <span class="rest-countdown-num">${s}s</span>`;
+        restTimer = setInterval(() => {
+            s--;
+            if (s <= 0) {
+                stopRestTimer();
+                el.innerHTML = `Nueva partida en <span class="rest-countdown-num">0s</span>`;
+            } else {
+                el.innerHTML = `Nueva partida en <span class="rest-countdown-num">${s}s</span>`;
+            }
+        }, 1000);
+    }
+
+    function stopRestTimer() {
+        if (restTimer) {
+            clearInterval(restTimer);
+            restTimer = null;
         }
     }
 
@@ -1030,6 +1066,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     function leaveToLobby() {
         stopTimer();
         stopNextTimer();
+        stopRestTimer();
         clearResume();
         resumeToken = null;
         currentRoom = null;
@@ -1285,6 +1322,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         guestName = '';
         stopTimer();
         stopNextTimer();
+        stopRestTimer();
         clearResume();
         resumeToken = null;
         currentRoom = null;
