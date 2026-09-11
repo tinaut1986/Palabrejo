@@ -34,11 +34,16 @@
             </div>
 
             <div id="setup-auth-mode" class="hidden">
-                <input type="text" id="auth-username" placeholder="Nombre de usuario" maxlength="20">
+                <input type="text" id="auth-username" placeholder="Nombre de usuario o correo" maxlength="255">
                 <input type="password" id="auth-password" placeholder="Contraseña" minlength="4">
                 <div class="auth-buttons">
                     <button id="login-btn" class="btn-primary">Iniciar sesión</button>
                     <button id="register-btn" class="btn-secondary">Registrarse</button>
+                </div>
+                <div id="external-auth" class="hidden">
+                    <div class="separator">o</div>
+                    <div id="google-btn"></div>
+                    <button id="microsoft-btn" class="btn-microsoft hidden">Continuar con Microsoft</button>
                 </div>
                 <button id="back-guest-btn" class="btn-link">Volver</button>
             </div>
@@ -226,6 +231,11 @@
         <div class="modal">
             <h2 id="profile-title">Mi perfil</h2>
             <div id="profile-body" class="profile-body"></div>
+            <div id="profile-account" class="profile-account hidden">
+                <p>Vincula tu cuenta con Google o Microsoft para añadir tu correo verificado y poder entrar con un clic.</p>
+                <div id="google-link-btn"></div>
+                <button id="microsoft-link-btn" class="btn-microsoft hidden">Continuar con Microsoft</button>
+            </div>
             <div id="profile-friend-action"></div>
             <span id="profile-error" class="error-message"></span>
             <button id="back-from-profile-btn" class="btn-secondary">Volver</button>

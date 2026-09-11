@@ -1108,3 +1108,42 @@ button.letter-tile:active { transform: scale(0.92); }
 }
 
 #profile-friend-action { margin-top: 12px; }
+
+/* El boton lo pinta Google en un iframe de ancho fijo: solo hay que centrarlo */
+#google-btn {
+    display: flex;
+    justify-content: center;
+}
+
+/* Microsoft no da boton: se imita el suyo para que haga juego con el de Google */
+.btn-microsoft {
+    display: block;
+    width: 260px;
+    margin: 0.6rem auto 0;
+    padding: 0.7rem 1rem;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    background: #2f2f2f;
+    color: #fff;
+    font-size: 0.95rem;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.btn-microsoft:hover {
+    background: #3c3c3c;
+}
+
+.profile-account {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 1rem 0;
+}
+
+.profile-account p {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    margin: 0;
+}

@@ -9,7 +9,25 @@ const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
-const dbConfig = require('./config');
+const appConfig = require('./config');
+
+// config.js lleva la conexion a la base de datos y, opcionalmente, el cliente
+// de Google. Se separan porque lo primero se le pasa tal cual a mysql2.
+const {
+    googleClientId: configGoogleClientId,
+    microsoftClientId: configMicrosoftClientId,
+    microsoftClientSecret: configMicrosoftClientSecret,
+    microsoftTenant: configMicrosoftTenant,
+    baseUrl: configBaseUrl,
+    ...dbConfig
+} = appConfig;
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || configGoogleClientId || '';
+const MICROSOFT_CLIENT_ID = process.env.MICROSOFT_CLIENT_ID || configMicrosoftClientId || '';
+const MICROSOFT_CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET || configMicrosoftClientSecret || '';
+// 'common' acepta cuentas personales (Outlook/Hotmail) y de organizacion
+const MICROSOFT_TENANT = process.env.MICROSOFT_TENANT || configMicrosoftTenant || 'common';
+// Solo hace falta si el servidor esta detras de un proxy que cambia el host
+const APP_BASE_URL = process.env.APP_BASE_URL || configBaseUrl || '';
 
 // --- SETUP ---
 const app = express();
@@ -155,17 +173,17 @@ function parseSession(token) {
 }
 
 // Valida el token de punta a punta: firma, caducidad y que la version siga
-// siendo la vigente. Devuelve { userId, username } o null.
+// siendo la vigente. Devuelve { userId, username, email } o null.
 async function verifySession(token) {
     const parsed = parseSession(token);
     if (!parsed) return null;
     try {
         const [rows] = await dbPool.query(
-            'SELECT username, token_version FROM users WHERE id = ?', [parsed.userId]
+            'SELECT username, email, token_version FROM users WHERE id = ?', [parsed.userId]
         );
         if (rows.length === 0) return null;
         if (rows[0].token_version !== parsed.tokenVersion) return null;
-        return { userId: parsed.userId, username: rows[0].username };
+        return { userId: parsed.userId, username: rows[0].username, email: rows[0].email };
     } catch (error) {
         console.error("Session verify error:", error);
         return null;
@@ -229,6 +247,14 @@ async function runDatabaseMigrations() {
 }
 
 // --- AUTH ENDPOINTS ---
+// El correo se guarda siempre en minusculas para que "A@x.com" y "a@x.com" no
+// puedan ser dos cuentas distintas (el UNIQUE de la tabla no lo distinguiria
+// igual, pero asi tampoco lo hacen las busquedas).
+function normalizeEmail(value) {
+    return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+
 app.post('/api/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
@@ -249,14 +275,18 @@ app.post('/api/register', async (req, res) => {
         if (existing.length > 0) {
             return res.status(409).json({ error: 'Ese nombre de usuario ya está registrado.' });
         }
-
         const hash = await bcrypt.hash(password, 10);
-        const [result] = await dbPool.query('INSERT INTO users (username, password_hash) VALUES (?, ?)', [username, hash]);
+        // El correo no se pide aqui: llega, ya verificado, al vincular la
+        // cuenta con Google. Un correo escrito a mano no demuestra nada.
+        const [result] = await dbPool.query(
+            'INSERT INTO users (username, password_hash) VALUES (?, ?)', [username, hash]
+        );
         await dbPool.query('INSERT INTO user_stats (user_id) VALUES (?)', [result.insertId]);
 
         res.status(201).json({
             message: 'Registro exitoso.',
             username,
+            email: null,
             token: signSession(result.insertId, 0)
         });
     } catch (error) {
@@ -272,12 +302,21 @@ app.post('/api/login', async (req, res) => {
     }
 
     try {
-        const [rows] = await dbPool.query('SELECT id, username, password_hash, token_version FROM users WHERE username = ?', [username]);
+        // Se puede entrar con el nombre o con el correo: para quien tiene
+        // varias cuentas, el correo es lo que recuerda
+        const [rows] = await dbPool.query(
+            'SELECT id, username, email, password_hash, token_version FROM users WHERE username = ? OR email = ?',
+            [username, normalizeEmail(username)]
+        );
         if (rows.length === 0) {
             return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
         }
 
         const user = rows[0];
+        // Las cuentas creadas con Google o Microsoft no tienen contrasena
+        if (!user.password_hash) {
+            return res.status(401).json({ error: 'Esta cuenta entra con Google o Microsoft.' });
+        }
         const valid = await bcrypt.compare(password, user.password_hash);
         if (!valid) {
             return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
@@ -286,6 +325,7 @@ app.post('/api/login', async (req, res) => {
         res.json({
             message: 'Login exitoso.',
             username: user.username,
+            email: user.email,
             token: signSession(user.id, user.token_version)
         });
     } catch (error) {
@@ -294,11 +334,299 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// --- IDENTIDAD EXTERNA (GOOGLE / MICROSOFT) ---
+// Los dos proveedores acaban en lo mismo: un identificador estable suyo y un
+// correo ya verificado. Lo que cambia es como se consigue esa informacion, asi
+// que solo eso es especifico de cada uno; el alta, el enlace y la emision de
+// sesion son comunes.
+app.get('/api/auth/config', (req, res) => {
+    res.json({
+        googleClientId: GOOGLE_CLIENT_ID,
+        microsoftEnabled: !!(MICROSOFT_CLIENT_ID && MICROSOFT_CLIENT_SECRET)
+    });
+});
+
+// Convierte lo que da el proveedor en un nombre que cumpla nuestras reglas y
+// no choque con otro ya registrado.
+async function buildAvailableUsername(preferred, email) {
+    const base = String(preferred || email.split('@')[0] || 'jugador')
+        .normalize('NFC')
+        .replace(/[^a-zA-Z0-9áéíóúüñÁÉÍÓÚÜÑ_]/g, '')
+        .slice(0, 16) || 'jugador';
+    const candidate = base.length >= 2 ? base : `${base}_`;
+    for (let suffix = 0; suffix < 1000; suffix++) {
+        const name = suffix === 0 ? candidate : `${candidate}${suffix}`;
+        const [rows] = await dbPool.query('SELECT id FROM users WHERE username = ?', [name]);
+        if (rows.length === 0) return name;
+    }
+    return null;
+}
+
+// Entra (o da de alta) con la identidad que acaba de verificar el proveedor.
+// `column` es google_sub o microsoft_sub: valores controlados por el codigo,
+// nunca por la peticion.
+async function signInWithProvider(column, profile) {
+    const [bySub] = await dbPool.query(
+        `SELECT id, username, email, token_version FROM users WHERE ${column} = ?`, [profile.sub]
+    );
+    if (bySub.length > 0) {
+        const user = bySub[0];
+        return { status: 200, body: { username: user.username, email: user.email, token: signSession(user.id, user.token_version) } };
+    }
+
+    // Si ya habia cuenta con ese correo, se enlaza en vez de duplicarla: es la
+    // misma persona, y el proveedor ya nos dijo que el correo es suyo.
+    const [byEmail] = await dbPool.query(
+        'SELECT id, username, email, token_version FROM users WHERE email = ?', [profile.email]
+    );
+    if (byEmail.length > 0) {
+        const user = byEmail[0];
+        await dbPool.query(`UPDATE users SET ${column} = ? WHERE id = ?`, [profile.sub, user.id]);
+        return { status: 200, body: { username: user.username, email: user.email, token: signSession(user.id, user.token_version) } };
+    }
+
+    const username = await buildAvailableUsername(profile.name, profile.email);
+    if (!username) return { status: 409, body: { error: 'No se pudo asignar un nombre de usuario.' } };
+
+    const [result] = await dbPool.query(
+        `INSERT INTO users (username, email, password_hash, ${column}) VALUES (?, ?, NULL, ?)`,
+        [username, profile.email, profile.sub]
+    );
+    await dbPool.query('INSERT INTO user_stats (user_id) VALUES (?)', [result.insertId]);
+    return { status: 201, body: { username, email: profile.email, token: signSession(result.insertId, 0) } };
+}
+
+// Vincula la identidad verificada con una cuenta ya iniciada. Es la unica
+// forma de que una cuenta tenga correo: asi el correo siempre viene verificado
+// por el proveedor, no escrito a mano por quien se registra.
+async function linkProviderToUser(column, profile, userId) {
+    // Una cuenta externa vale para una sola cuenta del juego: si no, dos
+    // usuarios acabarian pudiendo entrar el uno en el del otro.
+    const [taken] = await dbPool.query(
+        `SELECT id FROM users WHERE (${column} = ? OR email = ?) AND id <> ?`,
+        [profile.sub, profile.email, userId]
+    );
+    if (taken.length > 0) {
+        return { status: 409, body: { error: 'Esa cuenta ya está vinculada a otro usuario.' } };
+    }
+
+    await dbPool.query(
+        `UPDATE users SET ${column} = ?, email = ? WHERE id = ?`,
+        [profile.sub, profile.email, userId]
+    );
+    return { status: 200, body: { email: profile.email } };
+}
+
+// --- GOOGLE ---
+// El navegador obtiene un ID token de Google y nos lo manda; aqui se verifica
+// contra Google (nunca nos fiamos de lo que venga del cliente) y se cambia por
+// una sesion nuestra. Sin GOOGLE_CLIENT_ID configurado, el boton ni aparece.
+
+// Pide a Google que valide la firma y la caducidad del token. Se usa su
+// endpoint publico para no arrastrar una dependencia de JWT y claves rotatorias.
+async function verifyGoogleIdToken(credential) {
+    const response = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`
+    );
+    if (!response.ok) return null;
+    const payload = await response.json();
+    // El token tiene que estar emitido por Google para ESTA aplicacion: sin
+    // comprobar aud, valdria un token sacado de cualquier otro sitio.
+    if (payload.aud !== GOOGLE_CLIENT_ID) return null;
+    if (payload.iss !== 'accounts.google.com' && payload.iss !== 'https://accounts.google.com') return null;
+    if (payload.email_verified !== true && payload.email_verified !== 'true') return null;
+    if (!payload.sub || !payload.email) return null;
+    return { sub: payload.sub, email: normalizeEmail(payload.email), name: payload.name || '' };
+}
+
+app.post('/api/auth/google', async (req, res) => {
+    if (!GOOGLE_CLIENT_ID) {
+        return res.status(503).json({ error: 'El acceso con Google no está configurado.' });
+    }
+    const credential = req.body?.credential;
+    if (!credential) return res.status(400).json({ error: 'Falta el token de Google.' });
+
+    try {
+        const profile = await verifyGoogleIdToken(credential);
+        if (!profile) return res.status(401).json({ error: 'No se pudo verificar la cuenta de Google.' });
+        const result = await signInWithProvider('google_sub', profile);
+        res.status(result.status).json(result.body);
+    } catch (error) {
+        console.error("Google auth error:", error);
+        res.status(500).json({ error: 'Error del servidor.' });
+    }
+});
+
+app.post('/api/link/google', requireSession, async (req, res) => {
+    if (!GOOGLE_CLIENT_ID) {
+        return res.status(503).json({ error: 'El acceso con Google no está configurado.' });
+    }
+    const credential = req.body?.credential;
+    if (!credential) return res.status(400).json({ error: 'Falta el token de Google.' });
+
+    try {
+        const profile = await verifyGoogleIdToken(credential);
+        if (!profile) return res.status(401).json({ error: 'No se pudo verificar la cuenta de Google.' });
+        const result = await linkProviderToUser('google_sub', profile, req.session.userId);
+        res.status(result.status).json(result.body);
+    } catch (error) {
+        console.error("Google link error:", error);
+        res.status(500).json({ error: 'Error del servidor.' });
+    }
+});
+
+// --- MICROSOFT (cuentas Outlook / Hotmail / Live y de trabajo) ---
+// Microsoft no tiene un endpoint que valide tokens sueltos como el de Google,
+// asi que se usa el flujo de autorizacion clasico: el navegador va a
+// Microsoft en una ventana emergente y vuelve con un `code` que canjeamos
+// nosotros contra su endpoint de token. Como la respuesta llega por una
+// conexion TLS directa con Microsoft, el id_token que trae no necesita que le
+// comprobemos la firma (no ha pasado por el navegador); basta con mirar que
+// sea para esta aplicacion y para esta peticion.
+
+// Estados en vuelo, del momento de abrir la ventana al de la vuelta. Viven en
+// memoria porque duran segundos: un reinicio solo obliga a repetir el clic.
+const microsoftStates = new Map();
+const MICROSOFT_STATE_TTL_MS = 10 * 60 * 1000;
+
+function rememberMicrosoftState(entry) {
+    const state = crypto.randomBytes(24).toString('base64url');
+    microsoftStates.set(state, { ...entry, createdAt: Date.now() });
+    // Se limpia aqui, al crear, para no dejar un temporizador corriendo
+    for (const [key, value] of microsoftStates) {
+        if (Date.now() - value.createdAt > MICROSOFT_STATE_TTL_MS) microsoftStates.delete(key);
+    }
+    return state;
+}
+
+function takeMicrosoftState(state) {
+    const entry = microsoftStates.get(state);
+    if (!entry) return null;
+    microsoftStates.delete(state);
+    if (Date.now() - entry.createdAt > MICROSOFT_STATE_TTL_MS) return null;
+    return entry;
+}
+
+// La URL de vuelta tiene que coincidir letra por letra con la registrada en
+// Microsoft. Se puede fijar en la configuracion; si no, se deduce de la
+// peticion, que es lo que sirve en la mayoria de instalaciones.
+function microsoftRedirectUri(req) {
+    const base = (APP_BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+    return `${base}/api/auth/microsoft/callback`;
+}
+
+// Lee las claims de un id_token SIN comprobar la firma. Solo es aceptable
+// porque este token viene del endpoint de token de Microsoft por TLS, no del
+// navegador: si viniera del cliente habria que validar la firma contra su JWKS.
+function readIdTokenClaims(idToken) {
+    try {
+        const payload = String(idToken).split('.')[1];
+        return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    } catch (e) {
+        return null;
+    }
+}
+
+// Empieza el flujo. Si se manda un token de sesion valido, la vuelta vinculara
+// la cuenta de Microsoft con ese usuario en vez de crear una nueva.
+app.get('/api/auth/microsoft/start', async (req, res) => {
+    if (!MICROSOFT_CLIENT_ID || !MICROSOFT_CLIENT_SECRET) {
+        return res.status(503).send('El acceso con Microsoft no está configurado.');
+    }
+    const session = req.query.token ? await verifySession(req.query.token) : null;
+    const verifier = crypto.randomBytes(32).toString('base64url');
+    const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+    const nonce = crypto.randomBytes(16).toString('base64url');
+    const redirectUri = microsoftRedirectUri(req);
+    const state = rememberMicrosoftState({ verifier, nonce, userId: session?.userId || null, redirectUri });
+
+    const params = new URLSearchParams({
+        client_id: MICROSOFT_CLIENT_ID,
+        response_type: 'code',
+        redirect_uri: redirectUri,
+        response_mode: 'query',
+        scope: 'openid email profile',
+        state,
+        nonce,
+        code_challenge: challenge,
+        code_challenge_method: 'S256'
+    });
+    res.redirect(`https://login.microsoftonline.com/${MICROSOFT_TENANT}/oauth2/v2.0/authorize?${params}`);
+});
+
+// Pagina minima que devuelve el resultado a la ventana que abrio el flujo y se
+// cierra. Es la forma de volver al juego sin recargarlo ni pasar el token por
+// la URL.
+function microsoftPopupResponse(res, payload, status = 200) {
+    const json = JSON.stringify(payload).replace(/</g, '\\u003c');
+    res.status(status).type('html').send(`<!doctype html><meta charset="utf-8"><title>Palabrejo</title>
+<body style="font-family:sans-serif;background:#14121f;color:#eee;text-align:center;padding:2rem">
+<p>Puedes cerrar esta ventana.</p>
+<script>
+  const payload = ${json};
+  if (window.opener) window.opener.postMessage({ source: 'palabrejo-microsoft', ...payload }, window.location.origin);
+  window.close();
+</script>`);
+}
+
+app.get('/api/auth/microsoft/callback', async (req, res) => {
+    const entry = takeMicrosoftState(String(req.query.state || ''));
+    // Sin un state nuestro y sin usar, la vuelta no es de un flujo que
+    // hayamos empezado nosotros: es justo lo que evita el CSRF aqui.
+    if (!entry) return microsoftPopupResponse(res, { error: 'La solicitud caducó. Inténtalo de nuevo.' }, 400);
+    if (req.query.error) {
+        return microsoftPopupResponse(res, { error: String(req.query.error_description || req.query.error) }, 400);
+    }
+    const code = String(req.query.code || '');
+    if (!code) return microsoftPopupResponse(res, { error: 'Microsoft no devolvió ningún código.' }, 400);
+
+    try {
+        const tokenRes = await fetch(`https://login.microsoftonline.com/${MICROSOFT_TENANT}/oauth2/v2.0/token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                client_id: MICROSOFT_CLIENT_ID,
+                client_secret: MICROSOFT_CLIENT_SECRET,
+                grant_type: 'authorization_code',
+                code,
+                redirect_uri: entry.redirectUri,
+                code_verifier: entry.verifier,
+                scope: 'openid email profile'
+            })
+        });
+        const tokens = await tokenRes.json();
+        if (!tokenRes.ok || !tokens.id_token) {
+            console.error("Microsoft token error:", tokens);
+            return microsoftPopupResponse(res, { error: 'Microsoft rechazó la solicitud.' }, 401);
+        }
+
+        const claims = readIdTokenClaims(tokens.id_token);
+        if (!claims) return microsoftPopupResponse(res, { error: 'Respuesta de Microsoft ilegible.' }, 401);
+        if (claims.aud !== MICROSOFT_CLIENT_ID) return microsoftPopupResponse(res, { error: 'Token de otra aplicación.' }, 401);
+        // El nonce ata este token a la ventana que abrimos hace un momento
+        if (claims.nonce !== entry.nonce) return microsoftPopupResponse(res, { error: 'La respuesta no corresponde a esta solicitud.' }, 401);
+
+        const email = normalizeEmail(claims.email || claims.preferred_username || '');
+        if (!claims.sub || !email.includes('@')) {
+            return microsoftPopupResponse(res, { error: 'La cuenta de Microsoft no tiene un correo utilizable.' }, 401);
+        }
+        const profile = { sub: claims.sub, email, name: claims.name || '' };
+
+        const result = entry.userId
+            ? await linkProviderToUser('microsoft_sub', profile, entry.userId)
+            : await signInWithProvider('microsoft_sub', profile);
+        microsoftPopupResponse(res, result.body, result.status >= 400 ? result.status : 200);
+    } catch (error) {
+        console.error("Microsoft auth error:", error);
+        microsoftPopupResponse(res, { error: 'Error del servidor.' }, 500);
+    }
+});
+
 // Revalida el token que el cliente tiene guardado al arrancar
 app.post('/api/session', async (req, res) => {
     const session = await verifySession(req.body?.token);
     if (!session) return res.status(401).json({ error: 'Sesión no válida o caducada.' });
-    res.json({ username: session.username });
+    res.json({ username: session.username, email: session.email });
 });
 
 // Los nombres de cuentas registradas estan reservados para invitados.

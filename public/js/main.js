@@ -1,7 +1,7 @@
 document.addEventListener('DOMContentLoaded', async () => {
     // --- STATE ---
     let socket = null;
-    let currentUser = null; // { username, token } o null si se juega como invitado
+    let currentUser = null; // { username, email, token } o null si se juega como invitado
     let guestName = '';     // nombre en uso cuando se juega como invitado
     let currentRoom = null;
     let isHost = false;
@@ -212,7 +212,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
             if (!res.ok) throw new Error('Sesión caducada');
             const data = await res.json();
-            currentUser = { username: data.username, token: identity.token };
+            currentUser = { username: data.username, email: data.email, token: identity.token };
             guestName = '';
             enterLobby();
             return true;
@@ -821,10 +821,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!res.ok) throw new Error('No encontrado');
             const data = await res.json();
             if (!isMe) renderProfileFriendAction(username);
+            renderAccountLinking(isMe);
 
             $('profile-body').innerHTML = `
                 <h3>${data.username}</h3>
                 <p style="color:var(--text-dim);font-size:0.85rem;">Miembro desde ${new Date(data.created_at).toLocaleDateString('es-ES')}</p>
+                ${isMe && currentUser.email ? `<p style="color:var(--text-dim);font-size:0.85rem;">✉️ ${currentUser.email}</p>` : ''}
                 <div class="stat-grid">
                     <div class="stat-card">
                         <div class="stat-value">${data.games_played}</div>
@@ -855,6 +857,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (e) {
             $('profile-body').innerHTML = '<p class="empty-state">No se pudo cargar el perfil.</p>';
         }
+    }
+
+    // Vincular una cuenta externa es lo que da correo a la cuenta, asi que los
+    // botones solo tienen sentido en el perfil propio y mientras no haya correo.
+    function renderAccountLinking(isMe) {
+        const box = $('profile-account');
+        const show = isMe && (googleEnabled || microsoftEnabled) && !currentUser.email;
+        box.classList.toggle('hidden', !show);
+        if (!show) return;
+        renderGoogleButton($('google-link-btn'), 'continue_with');
+        $('microsoft-link-btn').classList.toggle('hidden', !microsoftEnabled);
     }
 
     // --- AMIGOS ---
@@ -1154,7 +1167,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
 
-            currentUser = { username: data.username, token: data.token };
+            currentUser = { username: data.username, email: data.email, token: data.token };
             guestName = '';
             enterLobby();
         } catch (e) {
@@ -1178,13 +1191,122 @@ document.addEventListener('DOMContentLoaded', async () => {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
 
-            currentUser = { username: data.username, token: data.token };
+            currentUser = { username: data.username, email: data.email, token: data.token };
             guestName = '';
             enterLobby();
         } catch (e) {
             showError('setup-error', e.message);
         }
     });
+
+    // Entrar con una cuenta externa, y vincular una ya iniciada con ella. Solo
+    // se ofrece lo que el servidor tenga configurado, asi que una instalacion
+    // sin Google ni Microsoft no pide nada a terceros.
+    // El mismo boton sirve para las dos cosas: lo que cambia es que haya o no
+    // sesion abierta cuando el proveedor responde.
+    let googleEnabled = false;
+    let microsoftEnabled = false;
+
+    async function setupExternalSignIn() {
+        let config = {};
+        try {
+            const res = await fetch('/api/auth/config');
+            config = await res.json();
+        } catch (e) { return; }
+
+        microsoftEnabled = !!config.microsoftEnabled;
+        if (microsoftEnabled) $('microsoft-btn').classList.remove('hidden');
+
+        if (config.googleClientId) {
+            await new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = 'https://accounts.google.com/gsi/client';
+                script.async = true;
+                script.onload = resolve;
+                script.onerror = reject;
+                document.head.appendChild(script);
+            }).catch(() => null);
+
+            if (window.google?.accounts?.id) {
+                window.google.accounts.id.initialize({
+                    client_id: config.googleClientId,
+                    callback: (response) => handleGoogleCredential(response.credential)
+                });
+                googleEnabled = true;
+                renderGoogleButton($('google-btn'), 'continue_with');
+            }
+        }
+
+        if (googleEnabled || microsoftEnabled) $('external-auth').classList.remove('hidden');
+    }
+
+    function renderGoogleButton(container, text) {
+        if (!googleEnabled || !container) return;
+        container.innerHTML = '';
+        window.google.accounts.id.renderButton(container, {
+            theme: 'filled_black', size: 'large', width: 260, text, locale: 'es'
+        });
+    }
+
+    // Con sesion abierta es vincular; sin ella, entrar
+    function applyExternalResult(data, linking) {
+        if (linking) {
+            currentUser.email = data.email;
+            saveIdentity();
+            loadProfile(currentUser.username);
+            return;
+        }
+        currentUser = { username: data.username, email: data.email, token: data.token };
+        guestName = '';
+        enterLobby();
+    }
+
+    async function handleGoogleCredential(credential) {
+        const linking = !!currentUser;
+        try {
+            const res = await fetch(linking ? '/api/link/google' : '/api/auth/google', {
+                method: 'POST',
+                headers: linking
+                    ? { 'Content-Type': 'application/json', ...authHeaders() }
+                    : { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ credential })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error);
+            applyExternalResult(data, linking);
+        } catch (e) {
+            showError(linking ? 'profile-error' : 'setup-error', e.message || 'No se pudo completar con Google.');
+        }
+    }
+
+    // Microsoft no da un boton con token como Google: se abre su pagina en una
+    // ventana emergente y el servidor devuelve el resultado por postMessage.
+    function startMicrosoftAuth() {
+        const linking = !!currentUser;
+        const url = '/api/auth/microsoft/start' + (linking ? `?token=${encodeURIComponent(currentUser.token)}` : '');
+        const popup = window.open(url, 'palabrejo-microsoft', 'width=520,height=640');
+        if (!popup) {
+            showError(linking ? 'profile-error' : 'setup-error', 'El navegador bloqueó la ventana de Microsoft.');
+        }
+    }
+
+    window.addEventListener('message', (event) => {
+        // La ventana la sirve este mismo servidor, asi que cualquier mensaje de
+        // otro origen no es cosa nuestra
+        if (event.origin !== window.location.origin) return;
+        if (event.data?.source !== 'palabrejo-microsoft') return;
+
+        const linking = !!currentUser;
+        if (event.data.error) {
+            showError(linking ? 'profile-error' : 'setup-error', event.data.error);
+            return;
+        }
+        applyExternalResult(event.data, linking);
+    });
+
+    $('microsoft-btn').addEventListener('click', startMicrosoftAuth);
+    $('microsoft-link-btn').addEventListener('click', startMicrosoftAuth);
+    setupExternalSignIn();
 
     // Lobby
     $('create-room-btn').addEventListener('click', () => {

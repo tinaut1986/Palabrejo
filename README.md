@@ -74,6 +74,11 @@ un usuario registrado toma el nombre de la base de datos. Los nombres
 registrados están reservados, así que un invitado no puede presentarse con el
 nombre de una cuenta ajena.
 
+El correo no se escribe a mano en ningún sitio: una cuenta lo obtiene al
+vincularse con Google o Microsoft (desde *Mi perfil*), que es quien verifica
+que es suyo. Una vez vinculada, se puede iniciar sesión con el nombre, con el
+correo o directamente con el botón del proveedor.
+
 El secreto de firma se genera al primer arranque y se guarda en `app_settings`,
 de modo que las sesiones abiertas siguen valiendo tras reconstruir el
 contenedor. Se puede fijar por entorno con `SESSION_SECRET`.
@@ -82,9 +87,35 @@ El token incluye un `token_version` que se contrasta con la base de datos, así
 que las sesiones son revocables aunque la firma sea válida: al cambiar una
 contraseña se incrementa y las sesiones abiertas de ese usuario mueren.
 
+### Entrar con Google o Microsoft
+
+Opcional. Crea un ID de cliente OAuth (tipo *aplicación web*) en la consola de
+Google Cloud con el dominio del juego en los orígenes autorizados y ponlo en
+`googleClientId` dentro de `config.js`, o en la variable de entorno
+`GOOGLE_CLIENT_ID`. Sin él, el botón no aparece y el juego no carga nada de
+Google.
+
+El navegador manda el ID token a `/api/auth/google` (entrar) o a
+`/api/link/google` (vincular la cuenta ya iniciada) y el servidor lo verifica
+contra Google antes de emitir su propia sesión o de guardar el correo.
+
+Para Microsoft (Outlook, Hotmail, Live y cuentas de organización) registra una
+aplicación en *Microsoft Entra ID → Registros de aplicaciones*, añade la
+plataforma **Web** con la URL de vuelta `https://TU-DOMINIO/api/auth/microsoft/callback`,
+crea un secreto de cliente y rellena `microsoftClientId` y
+`microsoftClientSecret` (o `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET`).
+Microsoft no ofrece un validador de tokens sueltos, así que se usa el flujo de
+autorización con PKCE: el juego abre una ventana emergente, Microsoft vuelve a
+`/api/auth/microsoft/callback` con un código y el servidor lo canjea él mismo
+contra Microsoft.
+
+En los dos casos, si ese correo ya tiene cuenta se enlaza con ella en vez de
+crear una nueva, y una misma cuenta externa no puede vincularse a dos
+usuarios.
+
 ### Contraseña olvidada
 
-No hay recuperación automática (el juego no pide email a nadie). La restablece
+No hay recuperación automática (no se envían correos). La restablece
 el administrador desde el servidor:
 
 ```bash
