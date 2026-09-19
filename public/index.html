@@ -110,6 +110,13 @@
                         <button class="stepper-btn" data-target="round-time" data-dir="1">+</button>
                     </div>
                 </div>
+                <div class="config-row">
+                    <label>Bonificaciones:</label>
+                    <select id="bonuses-enabled">
+                        <option value="1" selected>Sí</option>
+                        <option value="0">No</option>
+                    </select>
+                </div>
             </div>
 
             <button id="create-room-btn" class="btn-primary">Crear Sala</button>
@@ -219,6 +226,8 @@
         <div class="modal">
             <h2 id="round-results-title">Resultados de la ronda</h2>
             <div id="round-results-body" class="results-body"></div>
+            <div id="round-top-words" class="round-extra"></div>
+            <div id="round-missed-words" class="round-extra"></div>
             <p id="round-results-next" class="subtitle">Siguiente ronda en 5 segundos...</p>
             <button type="button" id="results-exit-btn" class="btn-link">Volver al hall</button>
         </div>
@@ -229,6 +238,9 @@
         <div class="modal">
             <h2 id="game-over-title">Partida terminada</h2>
             <div id="game-over-body" class="results-body"></div>
+            <div id="game-over-my-best" class="round-extra"></div>
+            <div id="game-over-most-found" class="round-extra"></div>
+            <div id="game-over-longest" class="round-extra"></div>
             <p id="game-over-next" class="rest-countdown subtitle"></p>
             <button id="back-to-lobby-final" class="btn-primary">Volver al Lobby</button>
         </div>

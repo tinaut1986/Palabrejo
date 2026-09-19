@@ -555,20 +555,22 @@ input::placeholder { color: var(--text-dim); }
 
 .letters-container {
     display: flex;
-    gap: 6px;
+    gap: 8px;
     justify-content: center;
     flex-wrap: wrap;
+    row-gap: 10px;
 }
 .letter-tile {
-    width: 46px;
-    height: 52px;
+    position: relative;
+    width: clamp(52px, 12vw, 66px);
+    height: clamp(58px, 13.5vw, 74px);
     background: var(--bg-card);
     border: 2px solid var(--accent);
     border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.5rem;
+    font-size: clamp(1.4rem, 5.5vw, 1.9rem);
     font-weight: 900;
     text-transform: uppercase;
     color: var(--text);
@@ -581,6 +583,54 @@ input::placeholder { color: var(--text-dim); }
     line-height: 1;
     padding: 0;
     transition: transform 0.08s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+/* Bonus/castigo temporal sobre una letra: anillo de cuenta atras + etiqueta */
+.bonus-badge {
+    position: absolute;
+    top: -12px;
+    right: -12px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: bonusPop 0.25s ease;
+    z-index: 2;
+}
+.bonus-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2px solid #fff;
+}
+.bonus-badge.bonus .bonus-ring { background: #2ecc71; box-shadow: 0 0 8px rgba(46,204,113,0.7); }
+.bonus-badge.malus .bonus-ring { background: #e74c3c; box-shadow: 0 0 8px rgba(231,76,60,0.7); }
+.bonus-badge.steal .bonus-ring { background: #9b59b6; box-shadow: 0 0 8px rgba(155,89,182,0.7); }
+.bonus-label {
+    position: absolute;
+    top: -14px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.55rem;
+    font-weight: 800;
+    color: var(--text);
+    background: var(--bg-card);
+    border-radius: 6px;
+    padding: 0 3px;
+    white-space: nowrap;
+}
+.bonus-secs {
+    position: relative;
+    font-size: 0.6rem;
+    font-weight: 800;
+    color: #fff;
+}
+@keyframes bonusPop {
+    0% { transform: scale(0); }
+    70% { transform: scale(1.15); }
+    100% { transform: scale(1); }
 }
 @media (hover: hover) {
     button.letter-tile:hover {
@@ -843,6 +893,26 @@ button.letter-tile:active { transform: scale(0.92); }
     color: var(--text-dim);
     margin-top: 4px;
 }
+.word-chip-more {
+    display: inline-block;
+    margin: 2px;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    font-style: italic;
+}
+.round-extra {
+    text-align: left;
+    margin: 12px 0;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+.round-extra:empty { display: none; }
+.results-subtitle {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    margin: 0 0 6px;
+    font-weight: 700;
+}
 .winner-badge {
     display: inline-block;
     background: var(--yellow);
@@ -901,13 +971,13 @@ button.letter-tile:active { transform: scale(0.92); }
     .modal { padding: 20px; margin: 10px; }
     h1.logo-font { font-size: 2rem; }
     .room-actions { flex-direction: column; }
-    .letter-tile { width: 42px; height: 48px; font-size: 1.35rem; }
     .score-name { min-width: 70px; font-size: 0.85rem; }
 }
 
-/* Pantallas bajas (móvil en horizontal, teclado abierto): compacta el dock */
+/* Pantallas bajas (móvil en horizontal, teclado abierto): compacta el dock,
+   pero las letras se mantienen grandes y comodas de pulsar (clamp de arriba) */
 @media (max-height: 620px) {
-    .letter-tile { width: 38px; height: 42px; font-size: 1.15rem; border-radius: 8px; }
+    .letter-tile { width: clamp(44px, 11vw, 56px); height: clamp(48px, 12vw, 62px); font-size: clamp(1.2rem, 4.5vw, 1.6rem); border-radius: 8px; }
     .built-word { min-height: 44px; }
     .built-letter { width: 30px; height: 34px; font-size: 1.05rem; }
     .builder-btn, .builder-actions .btn-primary { padding: 9px 12px; font-size: 0.95rem; }

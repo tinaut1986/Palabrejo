@@ -57,8 +57,14 @@ const {
     sanitizeGuestName,
     generateLetters: _generateLetters,
     countPlayableWords: _countPlayableWords,
+    getPlayableWords,
     selectPlayableLetters: _selectPlayableLetters,
-    isWordValid: _isWordValid
+    isWordValid: _isWordValid,
+    buildWordsByDistinctCount,
+    BONUS_MIN_SPAWN_DELAY_MS, BONUS_MAX_SPAWN_DELAY_MS,
+    BONUS_MIN_DURATION_MS, BONUS_MAX_DURATION_MS,
+    rollBonus,
+    applyBonus
 } = require('./lib/game-logic');
 
 // --- IN-MEMORY STORAGE ---
@@ -68,6 +74,9 @@ let rooms = {};
 let validWordsCache = new Set();
 let validWordsCanonical = new Set();
 let validWordsByLength = {};
+// Palabras agrupadas por su numero de letras distintas (6..8): de ahi se
+// sacan los repartos de letras, para garantizar que siempre hay un PALABREJO.
+let wordsByDistinctCount = {};
 
 async function loadValidWords() {
     try {
@@ -81,6 +90,7 @@ async function loadValidWords() {
             if (!validWordsByLength[row.length]) validWordsByLength[row.length] = new Set();
             validWordsByLength[row.length].add(row.word.toLowerCase());
         }
+        wordsByDistinctCount = buildWordsByDistinctCount(validWordsCache);
         console.log(`Loaded ${validWordsCache.size} valid words into cache.`);
     } catch (error) {
         console.error("Error loading valid words:", error);
@@ -556,7 +566,7 @@ function countPlayableWords(letters) {
 }
 
 function selectPlayableLetters(count) {
-    return _selectPlayableLetters(count, { validWordsCanonical });
+    return _selectPlayableLetters(count, { validWordsCanonical, wordsByDistinctCount });
 }
 
 function getRoomStateForClient(room) {
@@ -570,7 +580,7 @@ function getRoomStateForClient(room) {
             isHost: p.isHost,
             isGuest: p.isGuest,
             wordsThisRound: Array.from(p.wordsThisRound || []),
-            roundScore: Array.from(p.wordsThisRound || []).reduce((sum, w) => sum + calculateScore(w, room.currentLetters), 0)
+            roundScore: Array.from(p.wordsThisRound || []).reduce((sum, w) => sum + (p.wordPoints?.[w] ?? calculateScore(w, room.currentLetters)), 0)
         })),
         gameState: room.gameState,
         hostId: room.hostId,
@@ -579,7 +589,8 @@ function getRoomStateForClient(room) {
             totalRounds: room.totalRounds,
             roundTime: room.roundTime,
             isPublic: room.isPublic,
-            gameMode: room.gameMode || DEFAULT_GAME_MODE
+            gameMode: room.gameMode || DEFAULT_GAME_MODE,
+            bonusesEnabled: room.bonusesEnabled !== false
         },
         currentRound: room.currentRound,
         totalRounds: room.totalRounds,
@@ -666,6 +677,7 @@ function detachSocketFromRooms(socket) {
             if (room.roundTimer) clearTimeout(room.roundTimer);
             if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
             if (room.restTimer) clearTimeout(room.restTimer);
+            clearBonusTimers(room);
             delete rooms[roomCode];
             if (room.isPublic) broadcastPublicRooms();
             continue;
@@ -684,7 +696,7 @@ function detachSocketFromRooms(socket) {
 io.on('connection', (socket) => {
     console.log(`Connected: ${socket.id}`);
 
-    socket.on('createRoom', async ({ playerName, isPublic, maxPlayers, totalRounds, roundTime, gameMode, sessionToken }) => {
+    socket.on('createRoom', async ({ playerName, isPublic, maxPlayers, totalRounds, roundTime, gameMode, bonusesEnabled, sessionToken }) => {
         const player = await resolvePlayer(sessionToken, playerName);
         if (player.expired) return emitSessionExpired(socket);
         if (player.error) return socket.emit('error', player.error);
@@ -707,6 +719,7 @@ io.on('connection', (socket) => {
             totalRounds: clampedRounds,
             roundTime: clampedTime,
             gameMode: mode,
+            bonusesEnabled: bonusesEnabled !== false,
             currentRound: 0,
             currentLetters: [],
             roundTimer: null,
@@ -715,7 +728,10 @@ io.on('connection', (socket) => {
             usedWords: {},
             cleanupTimer: null,
             restTimer: null,
-            restEndsAt: 0
+            restEndsAt: 0,
+            activeBonus: null,
+            bonusSpawnTimer: null,
+            bonusExpireTimer: null
         };
 
         const token = crypto.randomBytes(16).toString('hex');
@@ -807,7 +823,7 @@ io.on('connection', (socket) => {
                 // Palabras ya acertadas en esta ronda, para repoblar la lista
                 words: Array.from(player.wordsThisRound).map(w => ({
                     word: w,
-                    points: calculateScore(w, room.currentLetters),
+                    points: player.wordPoints?.[w] ?? calculateScore(w, room.currentLetters),
                     palabrejo: isPalabrejo(w, room.currentLetters)
                 }))
             });
@@ -878,11 +894,38 @@ io.on('connection', (socket) => {
         player.wordsFound.push(cleanWord);
 
         const palabrejo = isPalabrejo(cleanWord, room.currentLetters);
-        const points = calculateScore(cleanWord, room.currentLetters);
+        const basePoints = calculateScore(cleanWord, room.currentLetters);
+
+        // Si la palabra usa la letra con bonus/castigo activo, se consume
+        // aqui: solo el primero en jugarla se lleva el efecto.
+        let points = basePoints;
+        let bonusApplied = null;
+        const bonus = room.activeBonus;
+        if (bonus && normalizeForMatch(cleanWord).includes(normalizeForMatch(bonus.letter))) {
+            points = applyBonus(basePoints, bonus);
+            bonusApplied = { letter: bonus.letter, kind: bonus.kind, value: bonus.value, malus: bonus.malus, label: bonus.label };
+
+            if (room.bonusExpireTimer) { clearTimeout(room.bonusExpireTimer); room.bonusExpireTimer = null; }
+            room.activeBonus = null;
+            io.to(roomCode).emit('letterBonusExpired', { letter: bonus.letter, reason: 'used', playerName: player.name, kind: bonus.kind, label: bonus.label });
+            scheduleBonusSpawn(roomCode);
+
+            if (bonus.kind === 'steal') {
+                const target = room.players
+                    .filter(p => p.id !== player.id)
+                    .sort((a, b) => b.score - a.score)[0];
+                if (target) {
+                    target.score = Math.max(0, target.score - bonus.value);
+                    io.to(roomCode).emit('bonusStolen', { from: target.name, to: player.name, amount: bonus.value });
+                }
+            }
+        }
+
+        player.wordPoints[wordKey] = points;
         player.score += points;
         player.totalWordsFound++;
 
-        socket.emit('wordResult', { word: cleanWord, valid: true, reason: 'ok', points, palabrejo });
+        socket.emit('wordResult', { word: cleanWord, valid: true, reason: 'ok', points, basePoints, palabrejo, bonusApplied });
         // El PALABREJO es la jugada de la ronda y se anuncia a la sala, pero
         // sin decir cual es: que cada cual la busque por su cuenta.
         if (palabrejo) {
@@ -942,6 +985,7 @@ function addPlayerToRoom(roomCode, playerId, playerName, isHost = false, isGuest
         score: 0,
         wordsFound: [],
         wordsThisRound: new Set(),
+        wordPoints: {},
         totalWordsFound: 0,
         isHost,
         isGuest,
@@ -971,6 +1015,7 @@ function scheduleRoomCleanup(roomCode) {
         const alive = room.players.some(p => !p.disconnected);
         if (!alive) {
             if (room.roundTimer) clearTimeout(room.roundTimer);
+            clearBonusTimers(room);
             delete rooms[roomCode];
         }
     }, RESUME_GRACE_MS);
@@ -985,7 +1030,7 @@ function startRound(roomCode) {
     room.roundEnded = false;
     room.roundEndsAt = Date.now() + room.roundTime * 1000;
 
-    room.players.forEach(p => { p.wordsThisRound = new Set(); });
+    room.players.forEach(p => { p.wordsThisRound = new Set(); p.wordPoints = {}; });
 
     io.to(roomCode).emit('roundStart', {
         round: room.currentRound,
@@ -996,6 +1041,66 @@ function startRound(roomCode) {
     broadcastRoomState(roomCode);
 
     room.roundTimer = setTimeout(() => endRound(roomCode), room.roundTime * 1000);
+
+    clearBonusTimers(room);
+    if (room.bonusesEnabled) scheduleBonusSpawn(roomCode);
+}
+
+// --- BONUS/CASTIGO EN EL TABLERO ---
+function clearBonusTimers(room) {
+    if (room.bonusSpawnTimer) { clearTimeout(room.bonusSpawnTimer); room.bonusSpawnTimer = null; }
+    if (room.bonusExpireTimer) { clearTimeout(room.bonusExpireTimer); room.bonusExpireTimer = null; }
+    room.activeBonus = null;
+}
+
+// De vez en cuando, mientras la ronda esta en marcha, aparece un bonus o
+// castigo sobre una letra del tablero al azar. Solo hay uno activo a la vez;
+// si nadie lo usa antes de que caduque, desaparece y se programa el
+// siguiente.
+function scheduleBonusSpawn(roomCode) {
+    const room = rooms[roomCode];
+    if (!room || room.gameState !== 'playing') return;
+
+    const delay = randomBetween(BONUS_MIN_SPAWN_DELAY_MS, BONUS_MAX_SPAWN_DELAY_MS);
+    const timeLeft = room.roundEndsAt - Date.now();
+    if (timeLeft <= delay + BONUS_MIN_DURATION_MS) return; // no cabe otra ronda de bonus
+
+    room.bonusSpawnTimer = setTimeout(() => spawnBonus(roomCode), delay);
+}
+
+function randomBetween(min, max) {
+    return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+function spawnBonus(roomCode) {
+    const room = rooms[roomCode];
+    if (!room || room.gameState !== 'playing' || room.activeBonus) return;
+    if (!room.currentLetters || room.currentLetters.length === 0) return;
+
+    const letter = room.currentLetters[Math.floor(Math.random() * room.currentLetters.length)];
+    const bonus = rollBonus();
+    const maxDuration = Math.max(BONUS_MIN_DURATION_MS, Math.min(BONUS_MAX_DURATION_MS, room.roundEndsAt - Date.now() - 1000));
+    const duration = randomBetween(BONUS_MIN_DURATION_MS, maxDuration);
+
+    room.activeBonus = { letter, ...bonus, expiresAt: Date.now() + duration };
+
+    io.to(roomCode).emit('letterBonus', {
+        letter,
+        kind: bonus.kind,
+        value: bonus.value,
+        malus: bonus.malus,
+        aggressive: bonus.aggressive,
+        label: bonus.label,
+        durationMs: duration
+    });
+
+    room.bonusExpireTimer = setTimeout(() => {
+        const r = rooms[roomCode];
+        if (!r || !r.activeBonus || r.activeBonus.letter !== letter) return;
+        r.activeBonus = null;
+        io.to(roomCode).emit('letterBonusExpired', { letter, reason: 'timeout' });
+        scheduleBonusSpawn(roomCode);
+    }, duration);
 }
 
 function endRound(roomCode) {
@@ -1008,19 +1113,45 @@ function endRound(roomCode) {
         clearTimeout(room.roundTimer);
         room.roundTimer = null;
     }
+    clearBonusTimers(room);
 
     const roundResults = room.players.map(p => ({
         id: p.id,
         name: p.name,
         wordsThisRound: Array.from(p.wordsThisRound),
-        scoreThisRound: Array.from(p.wordsThisRound).reduce((sum, w) => sum + calculateScore(w, room.currentLetters), 0),
+        scoreThisRound: Array.from(p.wordsThisRound).reduce((sum, w) => sum + (p.wordPoints?.[w] ?? calculateScore(w, room.currentLetters)), 0),
         totalScore: p.score
     }));
+
+    // Las palabras mas largas de la ronda, encontradas por quien sea: un
+    // vistazo rapido a la mejor jugada, sin tener que leer todas las listas.
+    const foundTally = {};
+    room.players.forEach(p => {
+        p.wordsThisRound.forEach(w => {
+            if (!foundTally[w]) foundTally[w] = { word: w, players: [] };
+            foundTally[w].players.push(p.name);
+        });
+    });
+    const topWords = Object.values(foundTally)
+        .sort((a, b) => b.word.length - a.word.length || a.word.localeCompare(b.word))
+        .slice(0, 5);
 
     io.to(roomCode).emit('roundEnd', {
         round: room.currentRound,
         results: roundResults,
-        letters: room.currentLetters
+        letters: room.currentLetters,
+        topWords
+    });
+
+    // Las que se le escaparon a cada uno: personal, solo para quien no las
+    // encontro (no tiene gracia que el resto vea lo que a ti te faltó).
+    const playable = getPlayableWords(room.currentLetters, { validWordsCache });
+    room.players.forEach(p => {
+        const missed = playable
+            .filter(w => !p.wordsThisRound.has(normalizeForMatch(w)))
+            .sort((a, b) => b.length - a.length || a.localeCompare(b))
+            .slice(0, 8);
+        io.to(p.id).emit('roundMissedWords', { round: room.currentRound, words: missed });
     });
 
     if (room.currentRound >= room.totalRounds) {
@@ -1040,6 +1171,27 @@ async function endGame(roomCode) {
     const sorted = [...room.players].sort((a, b) => b.score - a.score);
     const winner = sorted[0];
 
+    // Las mas repetidas (por distintos jugadores o en distintas rondas) y las
+    // mas largas de toda la partida, igual que al terminar una ronda pero
+    // sumando todo el juego.
+    const tally = {};
+    room.players.forEach(p => {
+        p.wordsFound.forEach(w => {
+            const key = normalizeForMatch(w);
+            if (!tally[key]) tally[key] = { word: w, count: 0, players: [] };
+            tally[key].count++;
+            tally[key].players.push(p.name);
+        });
+    });
+    const allWords = Object.values(tally);
+    const mostFound = allWords
+        .filter(t => t.count > 1)
+        .sort((a, b) => b.count - a.count || b.word.length - a.word.length)
+        .slice(0, 5);
+    const longestWords = [...allWords]
+        .sort((a, b) => b.word.length - a.word.length || a.word.localeCompare(b.word))
+        .slice(0, 5);
+
     io.to(roomCode).emit('gameOver', {
         winner: { id: winner.id, name: winner.name, score: winner.score },
         players: sorted.map(p => ({
@@ -1047,7 +1199,9 @@ async function endGame(roomCode) {
             name: p.name,
             score: p.score,
             wordsFound: p.wordsFound
-        }))
+        })),
+        mostFound,
+        longestWords
     });
 
     // Persist to DB for registered users
@@ -1121,6 +1275,7 @@ function startNewGame(roomCode) {
         p.totalWordsFound = 0;
         p.wordsFound = [];
         p.wordsThisRound = new Set();
+        p.wordPoints = {};
     });
 
     startRound(roomCode);

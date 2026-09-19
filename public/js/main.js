@@ -310,7 +310,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             rackLetters = data.letters.map(l => canonicalLetter(l));
             displayLetters = [...data.letters];
             builtWord = [];
-            renderLetters();
+            clearActiveBonus();
             renderBuiltWord();
 
             // Al reanudar, el servidor devuelve las palabras ya acertadas
@@ -330,13 +330,33 @@ document.addEventListener('DOMContentLoaded', async () => {
             startTimer();
         });
 
+        // Bonus/castigo que aparece sobre una letra del tablero
+        socket.on('letterBonus', (data) => {
+            showLetterBonus(data);
+        });
+        socket.on('letterBonusExpired', (data) => {
+            if (activeLetterBonus && canonicalLetter(activeLetterBonus.letter) === canonicalLetter(data.letter)) {
+                clearActiveBonus();
+            }
+            if (data.reason === 'used' && data.playerName !== playerDisplayName()) {
+                showFeedback(`${data.playerName} ha usado el bonus de la '${data.letter.toUpperCase()}' (${data.label})`, data.kind === 'steal' ? 'palabrejo' : 'valid');
+            }
+        });
+        socket.on('bonusStolen', (data) => {
+            if (data.from === playerDisplayName()) {
+                showFeedback(`${data.to} te ha robado ${data.amount} puntos`, 'invalid');
+                vibrate([15, 40, 15]);
+            }
+        });
+
         socket.on('wordResult', (data) => {
             if (data.valid) {
-                addWordChip(data.word, 'valid', data.points, data.palabrejo);
+                addWordChip(data.word, 'valid', data.points, data.palabrejo, data.basePoints, data.bonusApplied);
+                const bonusNote = data.bonusApplied ? ` (bonus ${data.bonusApplied.label})` : '';
                 showFeedback(
                     data.palabrejo
                         ? `¡PALABREJO! ${data.word.toUpperCase()} +${data.points}`
-                        : `${data.word.toUpperCase()} +${data.points}`,
+                        : `${data.word.toUpperCase()} +${data.points}${bonusNote}`,
                     data.palabrejo ? 'palabrejo' : 'valid'
                 );
                 roundScore += data.points;
@@ -375,7 +395,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         socket.on('roundEnd', (data) => {
             stopTimer();
+            clearActiveBonus();
             showRoundResults(data);
+        });
+
+        // Llega justo despues de roundEnd, personalizado: solo mis palabras
+        // que se me escaparon, no las de los demas
+        socket.on('roundMissedWords', (data) => {
+            const el = $('round-missed-words');
+            if (!el) return;
+            if (!data.words.length) {
+                el.innerHTML = '<h3 class="results-subtitle">¡No se te escapó ninguna! 🎉</h3>';
+                return;
+            }
+            el.innerHTML = `
+                <h3 class="results-subtitle">Se te escaparon estas</h3>
+                <div class="result-words">
+                    ${data.words.map(w => `<span class="word-chip invalid" style="display:inline-block;margin:2px;font-size:0.8rem;">${w}</span>`).join('')}
+                </div>
+            `;
         });
 
         socket.on('gameOver', (data) => {
@@ -493,7 +531,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderMyWords();
     }
 
-    function addWordChip(word, type, points = 0, palabrejo = false) {
+    function addWordChip(word, type, points = 0, palabrejo = false, basePoints = null, bonusApplied = null) {
         const key = canonicalLetter(word);
         const existing = myWords.find(w => w.key === key);
         if (existing) {
@@ -501,16 +539,26 @@ document.addEventListener('DOMContentLoaded', async () => {
             existing.type = type;
             existing.points = points;
             existing.palabrejo = palabrejo;
+            existing.basePoints = basePoints;
+            existing.bonusApplied = bonusApplied;
         } else {
-            myWords.push({ key, word, type, points, palabrejo });
+            myWords.push({ key, word, type, points, palabrejo, basePoints, bonusApplied });
         }
         markLatest(key);
+    }
+
+    // "+15 (11+4)": el total y, entre parentesis, base y modificador aplicado
+    const BONUS_OP = { multiply: 'x', add: '+', divide: '÷', subtract: '-', steal: '+' };
+    function pointsLabel(w) {
+        if (!w.bonusApplied || w.basePoints == null) return `<small>+${w.points}</small>`;
+        const op = BONUS_OP[w.bonusApplied.kind] || '+';
+        return `<small>+${w.points} (${w.basePoints}${op}${w.bonusApplied.value})</small>`;
     }
 
     function renderMyWords() {
         const sorted = [...myWords].sort((a, b) => a.key.localeCompare(b.key, 'es'));
         $('my-words-list').innerHTML = sorted.map(w => `
-            <span class="word-chip ${w.type}${w.palabrejo ? ' palabrejo' : ''}${w.key === latestWordKey ? ' latest' : ''}" data-key="${w.key}">${w.word}${w.type === 'valid' && w.points ? `<small>+${w.points}</small>` : ''}</span>
+            <span class="word-chip ${w.type}${w.palabrejo ? ' palabrejo' : ''}${w.key === latestWordKey ? ' latest' : ''}" data-key="${w.key}">${w.word}${w.type === 'valid' && w.points ? pointsLabel(w) : ''}</span>
         `).join('');
         const validCount = myWords.filter(w => w.type === 'valid').length;
         const countEl = $('my-words-count');
@@ -551,6 +599,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Las mismas letras, en el orden en que se pintan (el boton de barajar
     // solo toca esto: el juego sigue siendo el mismo)
     let displayLetters = [];
+
+    // --- BONUS/CASTIGO EN EL TABLERO ---
+    // Bonus activo en el tablero: { letter, kind, value, label, malus, expiresAt }
+    let activeLetterBonus = null;
+    let bonusTickTimer = null;
 
     // En móvil no hay teclado físico: el texto de ayuda se adapta
     const BUILDER_HINT = window.matchMedia('(hover: hover) and (pointer: fine)').matches
@@ -601,8 +654,48 @@ document.addEventListener('DOMContentLoaded', async () => {
     // cambia nada del juego: ayuda a ver combinaciones nuevas.
     function renderLetters() {
         $('letters-display').innerHTML = displayLetters
-            .map(l => `<button type="button" class="letter-tile" data-letter="${l}">${l}</button>`)
+            .map(l => `<button type="button" class="letter-tile" data-letter="${l}">${l}${bonusBadgeHtml(l)}</button>`)
             .join('');
+    }
+
+    // Marquita circular con la cuenta atras (en segundos) sobre la letra que
+    // tiene un bonus/castigo activo, con su etiqueta (x2, +5, ÷2, -5, robo).
+    function bonusBadgeHtml(letter) {
+        if (!activeLetterBonus || canonicalLetter(letter) !== canonicalLetter(activeLetterBonus.letter)) return '';
+        const secs = Math.max(0, Math.ceil((activeLetterBonus.expiresAt - Date.now()) / 1000));
+        const cls = activeLetterBonus.aggressive ? 'steal' : (activeLetterBonus.malus ? 'malus' : 'bonus');
+        // No solo color: el icono marca ademas si conviene (▲) o perjudica (▼/⚔)
+        const icon = activeLetterBonus.aggressive ? '⚔' : (activeLetterBonus.malus ? '▼' : '▲');
+        return `<span class="bonus-badge ${cls}"><span class="bonus-ring"></span><span class="bonus-label">${icon} ${activeLetterBonus.label}</span><span class="bonus-secs">${secs}</span></span>`;
+    }
+
+    function stopBonusTick() {
+        if (bonusTickTimer) { clearInterval(bonusTickTimer); bonusTickTimer = null; }
+    }
+
+    function clearActiveBonus() {
+        activeLetterBonus = null;
+        stopBonusTick();
+        renderLetters();
+    }
+
+    function showLetterBonus(data) {
+        activeLetterBonus = {
+            letter: data.letter,
+            kind: data.kind,
+            value: data.value,
+            label: data.label,
+            malus: !!data.malus,
+            aggressive: !!data.aggressive,
+            expiresAt: Date.now() + data.durationMs
+        };
+        renderLetters();
+        stopBonusTick();
+        bonusTickTimer = setInterval(() => {
+            if (!activeLetterBonus) return stopBonusTick();
+            if (Date.now() >= activeLetterBonus.expiresAt) return; // el server manda el expired
+            renderLetters();
+        }, 1000);
     }
 
     function shuffleLetters() {
@@ -726,7 +819,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             ['Rondas', config.totalRounds],
             ['Tiempo por ronda', `${config.roundTime}s`],
             ['Jugadores', `${state.players.length}/${config.maxPlayers}`],
-            ['Sala', config.isPublic ? 'Pública' : 'Privada']
+            ['Sala', config.isPublic ? 'Pública' : 'Privada'],
+            ['Bonificaciones', config.bonusesEnabled !== false ? 'Sí' : 'No']
         ];
         $('room-summary').innerHTML = `
             <ul class="summary-list">
@@ -787,6 +881,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // --- ROUND RESULTS ---
+    // Por jugador solo se ven unas pocas (las mas largas primero); el resto
+    // se resume en un "+N más" para no saturar la pantalla.
+    const ROUND_WORDS_SHOWN = 6;
+
     function showRoundResults(data) {
         showView('round-results-view');
         $('round-results-title').textContent = `Resultados - Ronda ${data.round}`;
@@ -794,6 +892,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const sorted = [...data.results].sort((a, b) => b.totalScore - a.totalScore);
         $('round-results-body').innerHTML = sorted.map((p, i) => {
             const isMe = p.id === socket.id;
+            const words = [...p.wordsThisRound].sort((a, b) => b.length - a.length || a.localeCompare(b));
+            const shown = words.slice(0, ROUND_WORDS_SHOWN);
+            const extra = words.length - shown.length;
             return `
                 <div class="result-player">
                     <span class="result-name ${isMe ? 'score-you' : ''}">
@@ -801,14 +902,32 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </span>
                     <span class="result-score">${p.totalScore} pts <small class="result-round">(+${p.scoreThisRound || 0} esta ronda)</small></span>
                     <div class="result-words">
-                        ${p.wordsThisRound.length > 0
-                            ? p.wordsThisRound.map(w => `<span class="word-chip valid" style="display:inline-block;margin:2px;font-size:0.75rem;">${w}</span>`).join('')
+                        ${shown.length > 0
+                            ? shown.map(w => `<span class="word-chip valid" style="display:inline-block;margin:2px;font-size:0.75rem;">${w}</span>`).join('')
                             : '<em>No formó palabras</em>'}
+                        ${extra > 0 ? `<span class="word-chip-more">+${extra} más</span>` : ''}
                     </div>
                 </div>
             `;
         }).join('');
+
+        renderTopWords(data.topWords || []);
+        $('round-missed-words').innerHTML = '';
+
         startNextCountdown();
+    }
+
+    // Las palabras mas largas de la ronda, con quien las encontro
+    function renderTopWords(topWords) {
+        const el = $('round-top-words');
+        if (!el) return;
+        if (!topWords.length) { el.innerHTML = ''; return; }
+        el.innerHTML = `
+            <h3 class="results-subtitle">Las más largas de la ronda</h3>
+            <div class="result-words">
+                ${topWords.map(t => `<span class="word-chip valid" style="display:inline-block;margin:2px;font-size:0.8rem;">${t.word} <small>(${[...new Set(t.players)].join(', ')})</small></span>`).join('')}
+            </div>
+        `;
     }
 
     // --- GAME OVER ---
@@ -816,7 +935,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         showView('game-over-view');
         $('game-over-title').textContent = `🏆 ${data.winner.name} gana!`;
 
-        $('game-over-body').innerHTML = data.players.map((p, i) => `
+        $('game-over-body').innerHTML = data.players.map((p, i) => {
+            const words = [...p.wordsFound].sort((a, b) => b.length - a.length || a.localeCompare(b));
+            const shown = words.slice(0, ROUND_WORDS_SHOWN);
+            const extra = words.length - shown.length;
+            return `
             <div class="result-player">
                 <span class="result-name">
                     ${i === 0 ? '👑 ' : ''}${p.name}
@@ -824,10 +947,44 @@ document.addEventListener('DOMContentLoaded', async () => {
                 </span>
                 <span class="result-score">${p.score} pts</span>
                 <div class="result-words">
-                    ${p.wordsFound.map(w => `<span class="word-chip valid" style="display:inline-block;margin:2px;font-size:0.75rem;">${w}</span>`).join('')}
+                    ${shown.map(w => `<span class="word-chip valid" style="display:inline-block;margin:2px;font-size:0.75rem;">${w}</span>`).join('')}
+                    ${extra > 0 ? `<span class="word-chip-more">+${extra} más</span>` : ''}
                 </div>
             </div>
-        `).join('');
+        `;
+        }).join('');
+
+        // Tus palabras más largas de toda la partida, para ti solo
+        const me = data.players.find(p => p.id === socket.id);
+        const myBestEl = $('game-over-my-best');
+        if (myBestEl) {
+            if (me && me.wordsFound.length) {
+                const myTop = [...me.wordsFound].sort((a, b) => b.length - a.length || a.localeCompare(b)).slice(0, 5);
+                myBestEl.innerHTML = `
+                    <h3 class="results-subtitle">Tus palabras más largas</h3>
+                    <div class="result-words">
+                        ${myTop.map(w => `<span class="word-chip valid" style="display:inline-block;margin:2px;font-size:0.8rem;">${w}</span>`).join('')}
+                    </div>
+                `;
+            } else {
+                myBestEl.innerHTML = '';
+            }
+        }
+
+        renderGameOverList('game-over-most-found', 'Las más repetidas', data.mostFound, t => `${t.word} <small>(${t.count}×)</small>`);
+        renderGameOverList('game-over-longest', 'Las más largas de la partida', data.longestWords, t => `${t.word} <small>(${[...new Set(t.players)].join(', ')})</small>`);
+    }
+
+    function renderGameOverList(elId, title, items, formatItem) {
+        const el = $(elId);
+        if (!el) return;
+        if (!items || !items.length) { el.innerHTML = ''; return; }
+        el.innerHTML = `
+            <h3 class="results-subtitle">${title}</h3>
+            <div class="result-words">
+                ${items.map(t => `<span class="word-chip valid" style="display:inline-block;margin:2px;font-size:0.8rem;">${formatItem(t)}</span>`).join('')}
+            </div>
+        `;
     }
 
     // --- SCORES UPDATE ---
@@ -1333,7 +1490,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             maxPlayers: parseInt($('max-players').textContent),
             totalRounds: parseInt($('total-rounds').textContent),
             roundTime: parseInt($('round-time').textContent),
-            gameMode: $('game-mode').value
+            gameMode: $('game-mode').value,
+            bonusesEnabled: $('bonuses-enabled').value === '1'
         });
         isHost = true;
         setPendingRoom(true);
