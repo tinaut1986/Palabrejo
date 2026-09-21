@@ -107,6 +107,27 @@ Configurable por sala (`room.bonusesEnabled`, opción al crear sala).
   de toda la partida. Sin "faltantes": no tiene sentido a nivel de partida
   completa (el diccionario jugable cambia cada ronda).
 
+## Rate-limit y throttling
+
+En memoria, sin dependencias externas (`lib/rate-limit.js`, ventana
+deslizante). Se resetea si el proceso reinicia — no es a prueba de balas,
+solo frena abuso trivial y scripts:
+
+- **HTTP `/api/*`**: máximo 40 peticiones/10s por IP (`req.ip`, con
+  `trust proxy` activo porque el despliegue va detrás de Apache). Por
+  encima, `429`.
+- **Login**: tras 5 fallos por IP en 5 minutos, `429` aunque las
+  credenciales sean correctas; se resetea al acertar o al caducar la
+  ventana. Independiente del límite general de `/api/*`.
+- **`submitWord`**: más de 20 palabras/segundo por jugador (`socket.id`) y
+  el servidor deja de validarlas — responde `wordResult` con
+  `reason: 'throttled'`, sin procesar diccionario ni duplicados.
+- **Eventos de socket en general**: más de 60 eventos/segundo de cualquier
+  tipo desde un mismo socket lo desconecta (`socket.disconnect(true)`);
+  ningún jugador humano se acerca a esa cifra.
+- Los cuatro limitadores se barren cada 5 minutos (`sweep()`) para no
+  acumular claves de sockets/IPs que ya no están.
+
 ## Sesiones y autenticación
 
 - Login devuelve un token firmado (HMAC-SHA256) que el cliente reenvía al

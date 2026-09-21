@@ -375,7 +375,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const msgs = {
                     duplicate: 'Ya usaste esa palabra',
                     used_by_other: 'Otro jugador ya la usó',
-                    invalid: 'Palabra no válida'
+                    invalid: 'Palabra no válida',
+                    throttled: 'Vas muy rápido, espera un momento'
                 };
                 showFeedback(msgs[data.reason] || 'No válida', 'invalid');
                 shakeElement($('built-word'));
