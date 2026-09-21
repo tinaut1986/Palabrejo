@@ -10,6 +10,7 @@ const fsp = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const dbConfig = require('./config');
+const { createLimiter } = require('./lib/rate-limit');
 
 // --- SETUP ---
 const app = express();
@@ -18,8 +19,27 @@ const PORT_HTTPS = 3001;
 
 let dbPool;
 
+// Detrás de Apache (mod_proxy) en despliegue: sin esto req.ip seria siempre
+// la IP del proxy y el rate-limit por IP agruparia a todo el mundo.
+app.set('trust proxy', 1);
+
 app.use(express.json());
 app.use(express.static('public'));
+
+// --- RATE LIMIT (issue #3) ---
+// En memoria, sin dependencias: el server es single-process. No es a prueba
+// de balas (reinicia con el proceso) pero frena abuso trivial y scripts.
+const apiLimiter = createLimiter({ windowMs: 10 * 1000 });
+const API_LIMIT_PER_WINDOW = 40;
+const loginFailLimiter = createLimiter({ windowMs: 5 * 60 * 1000 });
+const LOGIN_FAIL_LIMIT = 5;
+
+app.use('/api/', (req, res, next) => {
+    if (apiLimiter.hit(req.ip) > API_LIMIT_PER_WINDOW) {
+        return res.status(429).json({ error: 'Demasiadas peticiones. Prueba de nuevo en unos segundos.' });
+    }
+    next();
+});
 
 // --- SSL ---
 const sslKeyPath = '/ssl/keys/key.pem';
@@ -283,18 +303,27 @@ app.post('/api/login', async (req, res) => {
         return res.status(400).json({ error: 'Usuario y contraseña requeridos.' });
     }
 
+    // Bloqueo por fuerza bruta: independiente del limite general de /api/,
+    // solo cuenta fallos y se resetea solo (la ventana caduca) o al acertar.
+    if (loginFailLimiter.count(req.ip) >= LOGIN_FAIL_LIMIT) {
+        return res.status(429).json({ error: 'Demasiados intentos fallidos. Prueba de nuevo en unos minutos.' });
+    }
+
     try {
         const [rows] = await dbPool.query('SELECT id, username, password_hash, token_version FROM users WHERE username = ?', [username]);
         if (rows.length === 0) {
+            loginFailLimiter.hit(req.ip);
             return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
         }
 
         const user = rows[0];
         const valid = await bcrypt.compare(password, user.password_hash);
         if (!valid) {
+            loginFailLimiter.hit(req.ip);
             return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
         }
 
+        loginFailLimiter.reset(req.ip);
         res.json({
             message: 'Login exitoso.',
             username: user.username,
@@ -693,8 +722,21 @@ function detachSocketFromRooms(socket) {
 }
 
 // --- SOCKET.IO ---
+// Frena a un cliente (o script) que dispara eventos de socket sin parar: por
+// encima de esto ya no es un jugador humano tecleando/tocando.
+const socketFloodLimiter = createLimiter({ windowMs: 1000 });
+const SOCKET_EVENTS_PER_SECOND = 60;
+const wordSubmitLimiter = createLimiter({ windowMs: 1000 });
+const WORD_SUBMIT_LIMIT_PER_SECOND = 20;
+
 io.on('connection', (socket) => {
     console.log(`Connected: ${socket.id}`);
+
+    socket.onAny(() => {
+        if (socketFloodLimiter.hit(socket.id) > SOCKET_EVENTS_PER_SECOND) {
+            socket.disconnect(true);
+        }
+    });
 
     socket.on('createRoom', async ({ playerName, isPublic, maxPlayers, totalRounds, roundTime, gameMode, bonusesEnabled, sessionToken }) => {
         const player = await resolvePlayer(sessionToken, playerName);
@@ -868,6 +910,13 @@ io.on('connection', (socket) => {
 
         const cleanWord = word.trim().toLowerCase();
         if (cleanWord.length < MIN_WORD_LENGTH) return;
+
+        // Por encima de esto ya no es alguien jugando: se descarta sin
+        // validar (ni contra diccionario ni contra duplicados) para no
+        // regalar trabajo pesado a un cliente que abusa.
+        if (wordSubmitLimiter.hit(socket.id) > WORD_SUBMIT_LIMIT_PER_SECOND) {
+            return socket.emit('wordResult', { word: cleanWord, valid: false, reason: 'throttled', points: 0 });
+        }
 
         // Words with/without accents are the same word for duplicate purposes
         // (ñ stays distinct). Words found are kept as typed for display.
@@ -1294,6 +1343,15 @@ async function startServer() {
         console.log(`\nPalabrejo running on ${protocol}://localhost:${activePort}`);
         console.log("Ready to accept connections.");
     });
+
+    // Los limitadores acumulan una clave por IP/socket visto: sin esto
+    // crecerian sin fin en un proceso que lleva dias arriba.
+    setInterval(() => {
+        apiLimiter.sweep();
+        loginFailLimiter.sweep();
+        socketFloodLimiter.sweep();
+        wordSubmitLimiter.sweep();
+    }, 5 * 60 * 1000);
 }
 
 startServer();
