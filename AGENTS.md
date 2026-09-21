@@ -20,7 +20,7 @@ Esta guía sirve para cualquier agente (opencode, Claude/Cursor, etc.). Léela
 
 ```bash
 npm install
-npm test          # unitarios de game-logic (jest). Los de integración llegarán (spec 008)
+npm test          # unitarios de game-logic (jest). Los de integración llegarán (issue #8)
 npm start         # arranca en :3000 (HTTP)
 ```
 
@@ -30,39 +30,59 @@ npm start         # arranca en :3000 (HTTP)
 
 ## Estructura
 
-- `server.js` — backend completo (monolito; refactor en spec 007).
+- `server.js` — backend completo (monolito; refactor en issue #7).
 - `lib/game-logic.js` — lógica pura y testeable (puntuación, letras, bonus).
 - `public/` — frontend: `index.html`, `style.css`, `js/main.js` (monolito) ,
   imágenes, manifest PWA.
 - `migrations/` — SQL versionado con `NNN_nombre.sql` (idempotente).
 - `__tests__/` — unitarios de game-logic.
 - `scripts/` — importación de diccionario, reset de contraseñas.
-- `docs/specs/` — specs de mejoras (ver "Flujo de trabajo").
+- `docs/FUNCIONAMIENTO.md` — cómo funciona todo por dentro (arquitectura,
+  reglas de juego, protocolo de sockets). **Actualízalo** si tu cambio toca
+  algo ahí descrito (ver "Documento de funcionamiento" más abajo).
 
-## Flujo de trabajo (spec-driven)
+## Flujo de trabajo (issues)
 
-Las mejoras se gestionan con **specs versionadas** + **issues** de GitHub.
-El orden es siempre:
+El backlog vive **solo en issues de GitHub**, sin ficheros de spec aparte
+(evita el papeleo duplicado de mantener un `.md` y un issue que solo apunta
+a él). El cuerpo del issue ES la spec: objetivo, alcance, criterios de
+aceptación — como cualquier issue bien escrito.
 
-1. **Existe spec** para la idea en `docs/specs/` (plantilla `000_template.md`)?
-   - No → escríbela primero: qué y por qué + criterios de aceptación. Añádela
-     al índice (`docs/specs/README.md`), estado "borrador". Crea un PR que
-     solo añade el `.md`.
-   - El issue de implementación NO es la spec: la spec vive en el repo.
-2. **Spec lista** → estado "lista para implementar" en el índice.
-3. **Implementar** → issue de GitHub creado (`gh issue create` desde el repo)
-   que referencia la spec por su ruta relativa. Branch `feat/<slug>`.
-   El PR debe decir `Closes #<issue>`.
-4. **Terminada** → estado "hecho" en el índice; PR mergeado.
+1. **Idea nueva** → `gh issue create` con el detalle en el body (qué, por
+   qué, criterios de aceptación comprobables). Label según área
+   (`estructura`, `diseno`, `jugabilidad`, `tech-debt`) + `bug` si aplica.
+2. **Implementar** → branch `feat/<slug>` (o `fix/<slug>` para bugs). El PR
+   debe decir `Closes #<issue>`.
+3. **Terminada** → PR mergeado cierra el issue solo. Si el cambio toca
+   `docs/FUNCIONAMIENTO.md`, la actualización va en el mismo PR.
+
+### Trabajo conversacional (sesión en vivo)
+
+Cuando el usuario pide un cambio directamente en el chat (no desde el
+backlog de issues), no hace falta abrir issue antes de tocar código: se
+implementa, se verifica y se commitea/pushea **solo cuando el usuario lo
+pida explícitamente**. Si el cambio es sustancial y merece quedar
+documentado para el futuro, se abre el issue a posteriori (ya cerrado, como
+registro) o se actualiza `docs/FUNCIONAMIENTO.md` si cambia lógica.
 
 ### Convenciones del flujo
 
-- **Un PR por tema.** No mezcles features ni refactors en el mismo PR.
+- **Un PR por tema.** No mezcles features ni refactors en el mismo PR
+  (salvo trabajo conversacional consolidado en una sesión, que puede ir en
+  un único commit si el usuario no pide separarlo).
 - **No cambies la API/eventos de socket** sin actualizar servidor Y cliente
-  juntos (van en el mismo PR).
+  juntos (van en el mismo PR o commit).
 - **Notas en el body del PR**: qué cambia, cómo se verificó, capturas si toca.
 - Labels: `estructura`, `diseno`, `jugabilidad`, `tech-debt`, `bug`.
-- Bugs → issue con label `bug`, spec no necesaria (pero sí repro).
+
+## Documento de funcionamiento
+
+`docs/FUNCIONAMIENTO.md` es el resumen técnico vivo de cómo funciona el
+juego (arquitectura, ciclo de vida de sala, reglas de puntuación, bonus,
+protocolo de sockets...). **Tras cerrar un issue o hacer un cambio que
+altere algo ahí descrito, actualiza la sección correspondiente en el mismo
+PR/commit.** Si el cambio es solo estético o no afecta a nada descrito ahí,
+no hace falta tocarlo.
 
 ## Convenciones de código
 
@@ -74,7 +94,7 @@ El orden es siempre:
   resolvela en el server (`resolvePlayer`/`verifySession`).
 - Puntuación y validaciones: siempre en `lib/game-logic.js` (puro, testeable).
 - La normalización de letras tiene UN solo lugar canónico:
-  `normalizeForMatch` (spec 007 lo unifica). No la dupliques.
+  `normalizeForMatch` (issue #7 lo unifica). No la dupliques.
 
 ## GitHub
 
@@ -91,8 +111,8 @@ El orden es siempre:
 ## Zonas sensibles
 
 - `multipleStatements: true` está activo solo para migraciones (no lo uses en
-  queries del pool; spec 007 lo aísla).
+  queries del pool; issue #7 lo aísla).
 - El servidor es *single process* y guarda las salas en memoria: al reiniciar
   el contenedor se pierden las partidas en curso (por diseño).
 - No introduzcas dependencias externas (APIs, CDNs) en el cliente sin
-  justificarlo: hay specs para quitarlas (QR, fuentes).
+  justificarlo: hay issues para quitarlas (QR #4, fuentes #5).

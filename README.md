@@ -20,6 +20,10 @@ formar con ellas las palabras más largas. Diseñado para jugarse **en el móvil
   - **Normal** (por defecto): varios jugadores pueden encontrar la misma
     palabra y a todos les puntúa.
   - **Exclusivo**: cada palabra puntúa solo para quien la envía primero.
+- **Bonificaciones** (activables/desactivables al crear la sala): de vez en
+  cuando una letra del tablero luce un bonus o castigo temporal (x2, +5,
+  ÷2, -5, o "robo": suma puntos y se los resta al jugador que va primero en
+  la ronda). Se consume con la primera palabra que use esa letra.
 - Al acabar todas las rondas gana quien más puntos acumule.
 
 Las palabras se validan contra un diccionario de ~108.000 palabras del español
@@ -124,13 +128,13 @@ como el de cualquier amigo en la lista.
 
 ## Desarrollo
 
-Las mejoras se gestionan con **specs** versionadas en `docs/specs/` (una por
-feature, con criterios de aceptación) y **issues de GitHub** que las referencian.
-Todo el flujo de trabajo y las convenciones de código están en
-[AGENTS.md](AGENTS.md) — léelo si vas a tocar el código (o eres un agente IA).
+El backlog de mejoras se gestiona con **issues de GitHub** (sin ficheros de
+spec aparte: el cuerpo del issue ya es la spec). Todo el flujo de trabajo y
+las convenciones de código están en [AGENTS.md](AGENTS.md) — léelo si vas a
+tocar el código (o eres un agente IA).
 
-- Índice de specs con su estado: `docs/specs/README.md`.
-- Plantilla para una spec nueva: `docs/specs/000_template.md`.
+- Cómo funciona todo por dentro (arquitectura, reglas de juego, protocolo de
+  sockets): [docs/FUNCIONAMIENTO.md](docs/FUNCIONAMIENTO.md).
 
 ## Configuración de sala
 
