@@ -139,6 +139,9 @@ solo frena abuso trivial y scripts:
   HTTP/sockets con `socket.io-client`. Cubren: crear/unir/rechazar salas,
   partida completa (modos normal/exclusivo, puntos), reconexión con token,
   bonus (consumo, robo, expiración) y persistencia en BD al terminar.
+  También las rutas HTTP (`http-auth.test.js`, `http-friends.test.js`):
+  registro/login/sesión, disponibilidad de nombre, perfil, amistades y
+  leaderboard.
 - `server.js` no arranca solo al ser `require`ido (solo con
   `node server.js`, vía `require.main === module`): los tests llaman a
   `startServer()`/`stopServer()` ellos mismos, con `PORT=0` (puerto libre) y
