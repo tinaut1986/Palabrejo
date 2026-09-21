@@ -122,6 +122,16 @@ perfil ni amigos: hace falta una cuenta.
 El perfil de un jugador se abre pulsando su nombre, tanto el propio en el hall
 como el de cualquier amigo en la lista.
 
+## Desarrollo
+
+Las mejoras se gestionan con **specs** versionadas en `docs/specs/` (una por
+feature, con criterios de aceptación) y **issues de GitHub** que las referencian.
+Todo el flujo de trabajo y las convenciones de código están en
+[AGENTS.md](AGENTS.md) — léelo si vas a tocar el código (o eres un agente IA).
+
+- Índice de specs con su estado: `docs/specs/README.md`.
+- Plantilla para una spec nueva: `docs/specs/000_template.md`.
+
 ## Configuración de sala
 
 Ajustable por el anfitrión al crear la sala: 2–12 jugadores, 1–15 rondas y
