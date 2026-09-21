@@ -214,20 +214,28 @@ async function verifySession(token) {
 }
 
 // --- MIGRATION LOGIC ---
+function createDbPool(extra = {}) {
+    return mysql.createPool({
+        ...dbConfig,
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0,
+        connectTimeout: 10000,
+        ...extra
+    });
+}
+
+// multipleStatements SOLO en esta conexion: los ficheros de migracion traen
+// varias sentencias SQL seguidas. El pool que usa el resto de la app
+// (dbPool) no lo activa (issue #7): con parametros (?) en todas las queries
+// no hace falta, y no vale la pena el riesgo de dejarlo abierto en el pool
+// entero por una necesidad puntual de arranque.
 async function runDatabaseMigrations() {
     console.log("Checking for database migrations...");
+    const migrationPool = createDbPool({ connectionLimit: 2, multipleStatements: true });
     let connection;
     try {
-        dbPool = mysql.createPool({
-            ...dbConfig,
-            waitForConnections: true,
-            connectionLimit: 10,
-            queueLimit: 0,
-            connectTimeout: 10000,
-            multipleStatements: true
-        });
-
-        connection = await dbPool.getConnection();
+        connection = await migrationPool.getConnection();
 
         await connection.query(`
             CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -246,27 +254,28 @@ async function runDatabaseMigrations() {
 
         if (migrationsToRun.length === 0) {
             console.log("Database is already up to date.");
-            connection.release();
-            return;
+        } else {
+            console.log(`Found ${migrationsToRun.length} new migrations to run.`);
+            for (const file of migrationsToRun) {
+                console.log(` - Running migration: ${file}`);
+                const sql = await fsp.readFile(path.join(__dirname, 'migrations', file), 'utf-8');
+                await connection.query(sql);
+                await connection.query('INSERT INTO schema_migrations (version) VALUES (?)', [file]);
+                console.log(`   ... ${file} finished and recorded.`);
+            }
+            console.log("All new migrations completed successfully.");
         }
-
-        console.log(`Found ${migrationsToRun.length} new migrations to run.`);
-        for (const file of migrationsToRun) {
-            console.log(` - Running migration: ${file}`);
-            const sql = await fsp.readFile(path.join(__dirname, 'migrations', file), 'utf-8');
-            await connection.query(sql);
-            await connection.query('INSERT INTO schema_migrations (version) VALUES (?)', [file]);
-            console.log(`   ... ${file} finished and recorded.`);
-        }
-
-        console.log("All new migrations completed successfully.");
         connection.release();
     } catch (error) {
         console.error("!!! FATAL MIGRATION ERROR !!!");
         console.error(error);
         if (connection) connection.release();
         process.exit(1);
+    } finally {
+        await migrationPool.end();
     }
+
+    dbPool = createDbPool();
 }
 
 // --- AUTH ENDPOINTS ---

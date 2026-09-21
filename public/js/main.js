@@ -708,12 +708,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         vibrate(8);
     }
 
-    function canonicalLetter(c) {
-        return c.normalize('NFD')
-            .replace(/n\u0303/gi, 'ñ')
-            .replace(/[\u0300-\u036f]/g, '')
-            .toLowerCase();
-    }
+    // Misma normalizacion que el server: public/js/shared/normalize.js es
+    // el UNICO sitio con esta logica (issue #7); esto solo alias localmente
+    // el nombre que ya usan los 9 sitios que llaman a canonicalLetter().
+    const canonicalLetter = window.normalizeForMatch;
 
     function renderBuiltWord(animateLast = false) {
         const el = $('built-word');
