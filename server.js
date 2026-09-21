@@ -9,8 +9,17 @@ const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
-const dbConfig = require('./config');
+const baseDbConfig = require('./config');
 const { createLimiter } = require('./lib/rate-limit');
+
+// Override por entorno (solo para tests de integracion, issue #8): apuntar a
+// una base de datos distinta sin tocar config.js ni arriesgar la de produccion.
+const dbConfig = {
+    host: process.env.DB_HOST || baseDbConfig.host,
+    user: process.env.DB_USER || baseDbConfig.user,
+    password: process.env.DB_PASSWORD || baseDbConfig.password,
+    database: process.env.DB_NAME || baseDbConfig.database
+};
 
 // --- SETUP ---
 const app = express();
@@ -1331,6 +1340,12 @@ function startNewGame(roomCode) {
 }
 
 // --- SERVER INIT ---
+let sweepInterval = null;
+
+// Devuelve una promesa que resuelve cuando ya esta escuchando (no al
+// disparar el listen): los tests de integracion necesitan saber cuando el
+// servidor esta listo, y de paso permite PORT=0 (puerto libre asignado por
+// el SO) sin adivinar cual toco.
 async function startServer() {
     await runDatabaseMigrations();
     await loadSessionSecret();
@@ -1339,19 +1354,47 @@ async function startServer() {
     const activePort = server instanceof https.Server ? PORT_HTTPS : PORT_HTTP;
     const protocol = server instanceof https.Server ? 'https' : 'http';
 
-    server.listen(activePort, () => {
-        console.log(`\nPalabrejo running on ${protocol}://localhost:${activePort}`);
-        console.log("Ready to accept connections.");
+    await new Promise(resolve => {
+        server.listen(activePort, () => {
+            console.log(`\nPalabrejo running on ${protocol}://localhost:${server.address().port}`);
+            console.log("Ready to accept connections.");
+            resolve();
+        });
     });
 
     // Los limitadores acumulan una clave por IP/socket visto: sin esto
     // crecerian sin fin en un proceso que lleva dias arriba.
-    setInterval(() => {
+    sweepInterval = setInterval(() => {
         apiLimiter.sweep();
         loginFailLimiter.sweep();
         socketFloodLimiter.sweep();
         wordSubmitLimiter.sweep();
     }, 5 * 60 * 1000);
+    sweepInterval.unref?.();
 }
 
-startServer();
+// Contrapartida de startServer para los tests de integracion (issue #8):
+// cierra sockets, timers de sala y el pool de BD para que el proceso de test
+// termine limpio, sin conexiones ni salas colgadas.
+async function stopServer() {
+    if (sweepInterval) { clearInterval(sweepInterval); sweepInterval = null; }
+    for (const roomCode of Object.keys(rooms)) {
+        const room = rooms[roomCode];
+        if (room.roundTimer) clearTimeout(room.roundTimer);
+        if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
+        if (room.restTimer) clearTimeout(room.restTimer);
+        clearBonusTimers(room);
+        delete rooms[roomCode];
+    }
+    await new Promise(resolve => io.close(resolve));
+    if (dbPool) await dbPool.end();
+}
+
+module.exports = { app, server, io, rooms, startServer, stopServer, validWordsCache, spawnBonus };
+
+// En produccion (`node server.js`, o `CMD` del Dockerfile) arranca solo. Al
+// requerirse como modulo desde un test, quien lo requiere decide cuando
+// arrancar y con que configuracion (puerto/BD) via variables de entorno.
+if (require.main === module) {
+    startServer();
+}

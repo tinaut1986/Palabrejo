@@ -20,7 +20,7 @@ Esta guía sirve para cualquier agente (opencode, Claude/Cursor, etc.). Léela
 
 ```bash
 npm install
-npm test          # unitarios de game-logic (jest). Los de integración llegarán (issue #8)
+npm test          # unitarios + integración (jest); necesita MariaDB accesible (ver docs/FUNCIONAMIENTO.md)
 npm start         # arranca en :3000 (HTTP)
 ```
 

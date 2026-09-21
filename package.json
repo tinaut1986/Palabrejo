@@ -10,6 +10,9 @@
   "jest": {
     "setupFilesAfterEnv": [
       "<rootDir>/jest.setup.js"
+    ],
+    "testMatch": [
+      "<rootDir>/__tests__/**/*.test.js"
     ]
   },
   "keywords": [],
@@ -23,6 +26,7 @@
     "socket.io": "^4.8.1"
   },
   "devDependencies": {
-    "jest": "^30.5.1"
+    "jest": "^30.5.1",
+    "socket.io-client": "^4.8.1"
   }
 }

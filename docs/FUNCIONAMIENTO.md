@@ -128,6 +128,37 @@ solo frena abuso trivial y scripts:
 - Los cuatro limitadores se barren cada 5 minutos (`sweep()`) para no
   acumular claves de sockets/IPs que ya no están.
 
+## Tests
+
+- **Unitarios** (`__tests__/game-logic.test.js`, `words.test.js`,
+  `rate-limit.test.js`): lógica pura de `lib/`, sin sockets ni servidor.
+- **Integración** (`__tests__/integration/`): arrancan el servidor real
+  (`server.js` exporta `{ app, server, io, rooms, startServer, stopServer,
+  validWordsCache, spawnBonus }` para esto) contra una base de datos de test
+  aislada — `palabrejo_test_db`, nunca `palabrejo_db` — y hablan con él por
+  HTTP/sockets con `socket.io-client`. Cubren: crear/unir/rechazar salas,
+  partida completa (modos normal/exclusivo, puntos), reconexión con token,
+  bonus (consumo, robo, expiración) y persistencia en BD al terminar.
+- `server.js` no arranca solo al ser `require`ido (solo con
+  `node server.js`, vía `require.main === module`): los tests llaman a
+  `startServer()`/`stopServer()` ellos mismos, con `PORT=0` (puerto libre) y
+  `DB_NAME=palabrejo_test_db` fijados *antes* del `require`.
+- Al escribir un test que espera dos eventos que el servidor manda seguidos
+  sin `await` entre medias (p.ej. `playerToken` y luego `roomStateUpdate`),
+  hay que registrar **ambos** listeners antes de emitir la acción
+  (`emitAndWait` en `testServer.js`) — si se espera uno con `await` y
+  luego se registra el otro, el segundo puede haber llegado ya y perderse.
+- Los clientes de test se conectan con `reconnection: false`: si no,
+  cuando el servidor cierra al terminar (`stopServer`), el cliente intenta
+  reconectar solo y dejar temporizadores vivos, y Jest no termina el
+  proceso limpio.
+- `npm test` corre las dos suites en un mismo comando. Necesitan una
+  MariaDB accesible (`DB_HOST`, publicado en `3306` si se corre desde fuera
+  del contenedor) — no se mockea la base de datos.
+- La imagen de producción no lleva ni tests ni `devDependencies`
+  (`jest`, `socket.io-client`): hay `.dockerignore` para que `COPY . .` en
+  el `Dockerfile` no arrastre un `node_modules` de desarrollo del host.
+
 ## Sesiones y autenticación
 
 - Login devuelve un token firmado (HMAC-SHA256) que el cliente reenvía al
