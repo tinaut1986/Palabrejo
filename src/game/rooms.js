@@ -8,6 +8,10 @@
 // `rooms` se recibe por referencia (no por getter): es el mismo objeto en
 // memoria que usan los handlers de socket, así que las mutaciones de aquí
 // se ven allí sin más.
+const {
+    collectStaleRooms, collectIdlePlayers, HOST_REQUEST_TTL_MS
+} = require('../../lib/room-health');
+
 function createGameModule({ io, rooms, getDbPool, gameLogic }) {
     const {
         calculateScore, isPalabrejo, normalizeForMatch, getPlayableWords,
@@ -41,7 +45,8 @@ function createGameModule({ io, rooms, getDbPool, gameLogic }) {
                 isHost: p.isHost,
                 isGuest: p.isGuest,
                 wordsThisRound: Array.from(p.wordsThisRound || []),
-                roundScore: Array.from(p.wordsThisRound || []).reduce((sum, w) => sum + (p.wordPoints?.[w] ?? calculateScore(w, room.currentLetters)), 0)
+                roundScore: Array.from(p.wordsThisRound || []).reduce((sum, w) => sum + (p.wordPoints?.[w] ?? calculateScore(w, room.currentLetters)), 0),
+                afkWarned: !!p.afkWarned
             })),
             gameState: room.gameState,
             hostId: room.hostId,
@@ -92,7 +97,9 @@ function createGameModule({ io, rooms, getDbPool, gameLogic }) {
             isGuest,
             userId,
             disconnected: false,
-            resumeToken
+            resumeToken,
+            lastSeen: Date.now(),
+            afkWarned: false
         });
     }
 
@@ -115,21 +122,31 @@ function createGameModule({ io, rooms, getDbPool, gameLogic }) {
 
             socket.leave(roomCode);
             const wasHost = room.hostId === socket.id;
+            const wasHostRequester = room.hostRequest?.requesterId === socket.id;
             room.players = room.players.filter(p => p.id !== socket.id);
 
             if (room.players.length === 0) {
                 if (room.roundTimer) clearTimeout(room.roundTimer);
                 if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
                 if (room.restTimer) clearTimeout(room.restTimer);
+                if (room.hostRequestTimer) clearTimeout(room.hostRequestTimer);
                 clearBonusTimers(room);
                 delete rooms[roomCode];
                 if (room.isPublic) broadcastPublicRooms();
                 continue;
             }
 
+            // Una peticion de traspaso pendiente muere si se va su solicitante
+            // o el propio host (ya no podria responder a ella).
+            if (room.hostRequest && (wasHost || wasHostRequester)) {
+                room.hostRequest = null;
+                if (room.hostRequestTimer) { clearTimeout(room.hostRequestTimer); room.hostRequestTimer = null; }
+            }
+
             if (wasHost) {
                 room.hostId = room.players[0].id;
                 room.players[0].isHost = true;
+                io.to(roomCode).emit('roomNotice', { text: `${room.players[0].name} es el nuevo anfitrión.`, type: 'host' });
             }
             broadcastRoomState(roomCode);
             if (room.isPublic) broadcastPublicRooms();
@@ -397,6 +414,46 @@ function createGameModule({ io, rooms, getDbPool, gameLogic }) {
         });
     }
 
+    // Mantenimiento periodico de la salud de salas (issue #15). Lo llama un
+    // setInterval del server (~1 min): elimina las salas waiting huerfanas y
+    // avisa a los jugadores inactivos de las que siguen vivas. Devuelve un
+    // resumen {swept, warned} para tests/logs.
+    function sweepRooms(now = Date.now()) {
+        const swept = [];
+
+        for (const code of collectStaleRooms(rooms, now)) {
+            const room = rooms[code];
+            if (!room) continue;
+            swept.push(code);
+            if (room.hostRequestTimer) { clearTimeout(room.hostRequestTimer); room.hostRequestTimer = null; }
+            clearBonusTimers(room);
+
+            room.players.forEach(p => {
+                const sock = io.sockets.sockets.get(p.id);
+                if (sock) {
+                    sock.emit('roomClosed', 'La sala de espera se ha cerrado por inactividad.');
+                    sock.leave(code);
+                }
+            });
+            delete rooms[code];
+            if (room.isPublic) broadcastPublicRooms();
+        }
+
+        const warned = [];
+        for (const [code, room] of Object.entries(rooms)) {
+            if (!room || room.gameState !== 'waiting') continue;
+            for (const p of collectIdlePlayers(room, now)) {
+                p.afkWarned = true;
+                const sock = io.sockets.sockets.get(p.id);
+                if (sock) sock.emit('afkWarning', {});
+                io.to(code).emit('roomNotice', { text: `${p.name} lleva un rato sin responder.`, type: 'afk' });
+                warned.push(code);
+            }
+        }
+
+        return { swept, warned };
+    }
+
     // Arranca una partida nueva en la misma sala, con las mismas condiciones y
     // los jugadores que sigan dentro tras el descanso. Vacia el marcador y las
     // listas de palabras para que la partida empiece de cero.
@@ -446,6 +503,7 @@ function createGameModule({ io, rooms, getDbPool, gameLogic }) {
         endRound,
         endGame,
         startNewGame,
+        sweepRooms,
         spawnBonus,
         scheduleBonusSpawn,
         clearBonusTimers

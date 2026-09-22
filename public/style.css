@@ -397,6 +397,31 @@ input::placeholder { color: var(--text-dim); }
 }
 .player-item .player-name { font-weight: 600; }
 .player-item .player-host { color: var(--yellow); font-size: 0.8rem; }
+.player-item .player-badges {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.player-item .player-afk {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    font-weight: 400;
+}
+/* Boton de expulsar en cada jugador: compacto, no debe empujar la fila */
+.btn-sm {
+    padding: 4px 10px;
+    font-size: 0.8rem;
+    width: auto;
+    margin: 0;
+}
+
+.room-notice {
+    min-height: 1.2em;
+    color: var(--accent, #7c5cff);
+    font-size: 0.85rem;
+    text-align: center;
+    margin: 6px 0 0;
+}
 
 #host-controls {
     margin-top: 20px;

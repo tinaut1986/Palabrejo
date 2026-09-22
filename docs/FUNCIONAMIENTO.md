@@ -47,12 +47,13 @@ cambio es solo de UI/estética sin tocar lógica, no hace falta.
     sobre variables globales — así son testeables sin arrancar todo el server.
 - Estado de partidas **en memoria** (`rooms = {}`, module-level en
   `server.js`, pasado por referencia a `src/game/rooms.js`): no sobrevive a
-  un reinicio del contenedor (por diseño, spec de salud de salas pendiente
-  en issue #15 lo mitigará solo para salas huérfanas, no para partidas en
-  curso).
+  un reinicio del contenedor (por diseño). La salud de las salas en espera
+  (huérfanas, durmientes, traspaso de host) se gestiona en el server con un
+  mantenimiento periódico — ver "Salud de salas" más abajo.
 - **Lógica pura y testeable** vive en `lib/game-logic.js` (puntuación,
-  normalización de letras, bonus, selección de letras). Todo lo que se pueda
-  testear sin sockets/DB va ahí.
+  normalización de letras, bonus, selección de letras) y en
+  `lib/room-health.js` (salas waiting huérfanas y aviso AFK). Todo lo que se
+  pueda testear sin sockets/DB va ahí.
 - **DB** (MariaDB, `mysql2`): diccionario de palabras, usuarios/sesiones,
   amigos, stats e historial de partidas. Migraciones idempotentes en
   `migrations/`, aplicadas automáticamente al arrancar.
@@ -72,6 +73,36 @@ nuevo, misma sala, o se cierra).
   gente y configuración (`startNewGame`).
 - Una sala se borra si se queda sin jugadores; una desconexión en partida da
   un margen de reconexión (`RESUME_GRACE_MS`, 2 min) antes de expulsar.
+
+## Salud de salas (issue #15)
+
+Mantenimiento periódico (`roomSweepInterval` en `server.js`, ~1 min) que
+llama a `game.sweepRooms()`; las decisiones son funciones puras de
+`lib/room-health.js`:
+
+- **Sweep de salas huérfanas**: una sala en `waiting` cuya *actividad del
+  host* supera `WAITING_HOST_TTL_MS` (2 min, la misma ventana que la gracia
+  de reconexión) se elimina y su código se libera. "Actividad del host" =
+  cualquier evento de socket del host (`room.lastHostActivity`, refrescado en
+  `touchActivity` de `src/socket/handlers.js`). A los jugadores que quedaban
+  se les avisa con `roomClosed` antes de sacarles de la sala. Solo afecta a
+  `waiting`: las partidas en curso se gestionan con la gracia de
+  desconexión, así que un jugador pendiente de reconexión nunca se considera
+  huérfano.
+- **Anti-AFK en la sala de espera**: cada jugador guarda su `lastSeen`
+  (refrescado en cualquier evento de socket). Quien lleva más de
+  `AFK_WARN_MS` (1 min) sin respuesta recibe `afkWarning` y se marca con
+  `afkWarned` (visible en `roomStateUpdate` como "⚠ sin responder"), y la
+  sala recibe un `roomNotice` para que el host sepa a quién expulsar.
+- **Expulsión**: `kickPlayer` (solo host, solo sala de espera) saca al
+  jugador, le notifica con `kicked` y avisa al resto con `roomNotice`. El
+  expulsado no puede reanudar (su `resumeToken` ya no coincide con nadie).
+- **Transparencia del host**: en cualquier traspaso el resto de la sala recibe
+  `roomNotice` ("X es el nuevo anfitrión") — tanto si el host se va solo como
+  si cede el rol. Un jugador no-host puede pedir el mando con `becomeHost`;
+  el host actual recibe `becomeHostRequest` y decide con `respondHostRequest`
+  (aprobar traspasa el rol, rechazar avisa al solicitante). La petición
+  caduca sola (`HOST_REQUEST_TTL_MS`, 30 s) si el host no responde.
 
 ## Reparto de letras y PALABREJO garantizado
 
@@ -175,14 +206,16 @@ solo frena abuso trivial y scripts:
 ## Tests
 
 - **Unitarios** (`__tests__/game-logic.test.js`, `words.test.js`,
-  `rate-limit.test.js`): lógica pura de `lib/`, sin sockets ni servidor.
+  `rate-limit.test.js`, `room-health.test.js`): lógica pura de `lib/`, sin
+  sockets ni servidor.
 - **Integración** (`__tests__/integration/`): arrancan el servidor real
   (`server.js` exporta `{ app, server, io, rooms, startServer, stopServer,
-  validWordsCache, spawnBonus }` para esto) contra una base de datos de test
+  validWordsCache, spawnBonus, sweepRooms }` para esto) contra una base de datos de test
   aislada — `palabrejo_test_db`, nunca `palabrejo_db` — y hablan con él por
   HTTP/sockets con `socket.io-client`. Cubren: crear/unir/rechazar salas,
   partida completa (modos normal/exclusivo, puntos), reconexión con token,
-  bonus (consumo, robo, expiración) y persistencia en BD al terminar.
+  bonus (consumo, robo, expiración), salud de salas (sweep, expulsión,
+  traspaso de host, aviso AFK) y persistencia en BD al terminar.
   También las rutas HTTP (`http-auth.test.js`, `http-friends.test.js`):
   registro/login/sesión, disponibilidad de nombre, perfil, amistades y
   leaderboard.
@@ -248,12 +281,13 @@ solo frena abuso trivial y scripts:
 
 Cliente → servidor: `createRoom`, `joinRoom`, `rejoinGame`, `leaveRoom`,
 `startGame`, `submitWord`, `endRoundManual`, `roundTimeout`,
-`getPublicRooms`.
+`getPublicRooms`, `kickPlayer`, `becomeHost`, `respondHostRequest`.
 
 Servidor → cliente: `playerToken`, `roomStateUpdate`, `publicRoomsList`,
 `roundStart`, `wordResult`, `palabrejo`, `letterBonus`,
 `letterBonusExpired`, `bonusStolen`, `roundEnd`, `roundMissedWords`,
-`restStart`, `gameOver`, `sessionExpired`, `error`.
+`restStart`, `gameOver`, `sessionExpired`, `roomNotice`, `afkWarning`,
+`becomeHostRequest`, `roomClosed`, `kicked`, `error`.
 
 Si cambias el payload de alguno de estos eventos, actualiza servidor y
 cliente **en el mismo PR** (no hay versión de protocolo, van acoplados).

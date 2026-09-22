@@ -149,6 +149,8 @@
             <h2>Sala: <span id="room-code-display" class="room-code"></span></h2>
             <p class="subtitle">Comparte el código o escanea el QR para unirse.</p>
 
+            <p id="room-notice" class="room-notice" aria-live="polite"></p>
+
             <div id="qr-container" class="qr-container">
                 <canvas id="qr-canvas"></canvas>
             </div>
@@ -161,6 +163,10 @@
                 <p class="host-label">Solo el host puede iniciar</p>
                 <p id="solo-hint" class="host-label" style="display:none;color:var(--accent, #7c5cff);">Puedes empezar en solitario</p>
                 <button id="start-game-btn" class="btn-primary">Empezar Partida</button>
+            </div>
+
+            <div id="become-host-controls" class="hidden">
+                <button id="become-host-btn" class="btn-secondary">Convertirse en anfitrión</button>
             </div>
 
             <button id="leave-room-btn" class="btn-secondary danger">Salir de la sala</button>
