@@ -13,7 +13,27 @@ cambio es solo de UI/estética sin tocar lógica, no hace falta.
 ## Arquitectura
 
 - **Servidor autoritativo**: valida todo (palabras, puntos, identidad). El
-  cliente (`public/js/main.js`) solo pinta y envía intención.
+  cliente solo pinta y envía intención.
+- Cliente en módulos ES nativos (`<script type="module">`, sin bundler):
+  - `public/js/state.js` — estado compartido mutable (un objeto `state`, no
+    `let` sueltos: un `let` exportado por un módulo ES es de solo lectura
+    para quien lo importa) + `$`/showView/showError y utilidades de UI.
+  - `public/js/shared/normalize.js` — normalización de letras, el mismo
+    fichero que usa el servidor (ver más abajo).
+  - `public/js/identity.js` — sesión/invitado persistente, reanudar partida.
+  - `public/js/network.js` — conexión de socket.io y todos los `socket.on`.
+  - `public/js/builder.js` — rack de letras, palabra en construcción, bonus
+    en pantalla, teclado físico.
+  - `public/js/results.js` — resultados de ronda, fin de partida, marcador.
+  - `public/js/lobby.js` — sala de espera, QR, lista de salas públicas.
+  - `public/js/social.js` — perfil y amigos.
+  - `public/js/dialogs.js` — diálogo de confirmación y fichas de ayuda.
+  - `public/js/main.js` — arranque: registra los listeners del DOM e
+    importa todo lo anterior.
+  - Algunos pares de módulos se importan entre sí en ambos sentidos
+    (p. ej. `builder.js`↔`dialogs.js`): es un ciclo válido en ES modules
+    mientras el uso quede dentro de funciones, nunca en el nivel superior
+    del módulo — así se resuelve en tiempo de ejecución sin problema.
 - `server.js` es el bootstrap: monta Express/Socket.IO, migraciones, rate
   limit, y conecta los módulos de abajo. La lógica en sí vive en:
   - `src/session.js` — sesiones firmadas e identidad de cuentas.
@@ -171,6 +191,17 @@ solo frena abuso trivial y scripts:
 - La imagen de producción no lleva ni tests ni `devDependencies`
   (`jest`, `socket.io-client`): hay `.dockerignore` para que `COPY . .` en
   el `Dockerfile` no arrastre un `node_modules` de desarrollo del host.
+- **Cliente (`public/js/`)**: sin suite automatizada (issue #8 lo deja fuera
+  de alcance explícitamente). Para verificar cambios ahí, la opción real es
+  un navegador headless: `npm install --no-save puppeteer` y
+  `npx puppeteer browsers install chrome` descargan un Chrome usable aunque
+  el sistema no tenga uno instalado; con eso se puede cargar la app contra
+  el contenedor real (su IP de docker, ya que el puerto no está publicado al
+  host: `docker inspect <contenedor> --format '{{...IPAddress}}'`) y
+  comprobar errores de consola + flujo real (crear sala, jugar, perfil,
+  amigos...) con Puppeteer, en vez de fiarse a ciegas de la lectura del
+  código. No dejar el script de prueba en el repo: es una herramienta de
+  verificación puntual, no parte del proyecto.
 
 ## Sesiones y autenticación
 
