@@ -10,12 +10,32 @@ function registerSocketHandlers({
     socketFloodLimiter, SOCKET_EVENTS_PER_SECOND,
     wordSubmitLimiter, WORD_SUBMIT_LIMIT_PER_SECOND
 }) {
+    const { HOST_REQUEST_TTL_MS } = require('../../lib/room-health');
+
+    // Cualquier evento de un jugador cuenta como "actividad": refresca su
+    // lastSeen (para el anti-AFK de la sala de espera) y, si es el host, la
+    // actividad de la sala (mantiene viva la waiting para el sweep).
+    function touchActivity(socketId) {
+        const roomCode = game.findRoomBySocket(socketId);
+        if (!roomCode) return;
+        const room = rooms[roomCode];
+        if (!room) return;
+        const player = room.players.find(p => p.id === socketId);
+        if (player) {
+            player.lastSeen = Date.now();
+            player.afkWarned = false;
+        }
+        if (room.hostId === socketId) room.lastHostActivity = Date.now();
+    }
+
     io.on('connection', (socket) => {
         console.log(`Connected: ${socket.id}`);
 
         // Frena a un cliente (o script) que dispara eventos de socket sin
         // parar: por encima de esto ya no es un jugador humano tecleando/tocando.
+        // De paso refresta si el jugador sigue activo (issue #15).
         socket.onAny(() => {
+            touchActivity(socket.id);
             if (socketFloodLimiter.hit(socket.id) > SOCKET_EVENTS_PER_SECOND) {
                 socket.disconnect(true);
             }
@@ -56,7 +76,11 @@ function registerSocketHandlers({
                 restEndsAt: 0,
                 activeBonus: null,
                 bonusSpawnTimer: null,
-                bonusExpireTimer: null
+                bonusExpireTimer: null,
+                hostRequest: null,
+                hostRequestTimer: null,
+                createdAt: Date.now(),
+                lastHostActivity: Date.now()
             };
 
             const token = crypto.randomBytes(16).toString('hex');
@@ -75,6 +99,103 @@ function registerSocketHandlers({
 
         socket.on('getPublicRooms', () => {
             socket.emit('publicRoomsList', game.getPublicRooms());
+        });
+
+        // El host expulsa a un jugador de la sala en espera (issue #15): un
+        // dormido ocupa la plaza de un max de 12. Solo waiting y solo el host;
+        // el expulsado vuelve al hall sin opcion de reanudar.
+        socket.on('kickPlayer', ({ targetId } = {}) => {
+            const roomCode = game.findRoomBySocket(socket.id);
+            if (!roomCode) return;
+            const room = rooms[roomCode];
+            if (!room || room.gameState !== 'waiting') return;
+            if (room.hostId !== socket.id) return;
+            if (!targetId || targetId === socket.id) return;
+
+            const target = room.players.find(p => p.id === targetId);
+            if (!target) return;
+            const targetName = target.name;
+
+            room.players = room.players.filter(p => p.id !== targetId);
+            if (room.hostRequest?.requesterId === targetId) {
+                room.hostRequest = null;
+                if (room.hostRequestTimer) { clearTimeout(room.hostRequestTimer); room.hostRequestTimer = null; }
+            }
+
+            const targetSocket = io.sockets.sockets.get(targetId);
+            if (targetSocket) {
+                targetSocket.leave(roomCode);
+                targetSocket.emit('kicked', 'El anfitrión te ha expulsado de la sala.');
+            }
+
+            game.broadcastRoomState(roomCode);
+            if (room.isPublic) game.broadcastPublicRooms();
+            io.to(roomCode).emit('roomNotice', { text: `${targetName} ha sido expulsado de la sala.`, type: 'kick' });
+        });
+
+        // Pedir el rol de anfitrion cuando el host no responde o ha dejado la
+        // sala abierta (issue #15). La peticion pide permiso al host actual;
+        // si no responde, caduca y la sala huerfana la cierra el sweep.
+        socket.on('becomeHost', () => {
+            const roomCode = game.findRoomBySocket(socket.id);
+            if (!roomCode) return;
+            const room = rooms[roomCode];
+            if (!room || room.gameState !== 'waiting') return;
+            if (room.hostId === socket.id) return;
+            const player = room.players.find(p => p.id === socket.id);
+            if (!player) return;
+            if (room.hostRequest) return;
+
+            const hostSocket = io.sockets.sockets.get(room.hostId);
+            if (!hostSocket) {
+                return socket.emit('roomNotice', { text: 'El anfitrión no está conectado. Prueba más tarde.', type: 'info' });
+            }
+
+            const requestId = crypto.randomBytes(8).toString('hex');
+            room.hostRequest = { requestId, requesterId: socket.id, requesterName: player.name };
+            hostSocket.emit('becomeHostRequest', { requestId, requesterName: player.name });
+
+            room.hostRequestTimer = setTimeout(() => {
+                const r = rooms[roomCode];
+                if (!r || r.hostRequest?.requestId !== requestId) return;
+                r.hostRequest = null;
+                r.hostRequestTimer = null;
+                const requester = io.sockets.sockets.get(socket.id);
+                if (requester) {
+                    requester.emit('roomNotice', { text: 'El anfitrión no ha respondido a tu petición.', type: 'info' });
+                }
+            }, HOST_REQUEST_TTL_MS);
+        });
+
+        // El host contesta a una peticion de convertirse en anfitrion: aprobar
+        // lo traspasa (y se avisa a la sala), rechazar lo anula.
+        socket.on('respondHostRequest', ({ requestId, approve } = {}) => {
+            const roomCode = game.findRoomBySocket(socket.id);
+            if (!roomCode) return;
+            const room = rooms[roomCode];
+            if (!room || room.hostId !== socket.id) return;
+            if (!room.hostRequest || room.hostRequest.requestId !== requestId) return;
+
+            const request = room.hostRequest;
+            room.hostRequest = null;
+            if (room.hostRequestTimer) { clearTimeout(room.hostRequestTimer); room.hostRequestTimer = null; }
+
+            const requester = room.players.find(p => p.id === request.requesterId);
+            if (approve && requester) {
+                const oldHost = room.players.find(p => p.id === room.hostId);
+                if (oldHost) oldHost.isHost = false;
+                requester.isHost = true;
+                room.hostId = requester.id;
+                io.to(roomCode).emit('roomNotice', { text: `${requester.name} es el nuevo anfitrión.`, type: 'host' });
+            } else if (requester) {
+                const requesterSocket = io.sockets.sockets.get(request.requesterId);
+                if (requesterSocket) {
+                    requesterSocket.emit('roomNotice', { text: 'El anfitrión ha rechazado tu petición.', type: 'info' });
+                }
+            }
+
+            game.broadcastRoomState(roomCode);
+            if (room.isPublic) game.broadcastPublicRooms();
         });
 
         socket.on('joinRoom', async ({ roomCode, playerName, sessionToken }) => {

@@ -9,7 +9,7 @@ import { configLimits } from './lobby.js';
 import { openProfile, loadFriends, friendAction, renderCompare } from './social.js';
 import {
     toggleInfo, confirmLeave, leaveToLobby, requestLeaveToLobby,
-    setPendingRoom
+    setPendingRoom, confirmDialog
 } from './dialogs.js';
 
 // window.joinRoom lo usan tanto los botones inyectados por innerHTML (lista
@@ -191,6 +191,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         state.socket.emit('startGame');
     });
 
+    // Pedir el rol de anfitrion: el servidor se lo pregunta al host actual.
+    $('become-host-btn').addEventListener('click', async () => {
+        if (!(await confirmDialog({
+            title: '¿Pasar a ser anfitrión?',
+            message: 'Se lo preguntaremos al anfitrión actual. Si acepta, tú tomarás el control de la sala.',
+            confirmText: 'Pedir',
+            cancelText: 'Cancelar'
+        }))) return;
+        state.socket.emit('becomeHost');
+    });
+
     $('leave-room-btn').addEventListener('click', requestLeaveToLobby);
 
     // Game
@@ -248,6 +259,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (btn.classList.contains('friend-name')) {
             openProfile(btn.dataset.user, 'friends-view');
         }
+    });
+
+    // Expulsar a un jugador de la sala de espera (issue #15): solo se embuja
+    // el boton al host, pero el click llega delegado porque la lista se
+    // repinta entera al cambiar el estado.
+    document.addEventListener('click', (e) => {
+        const kick = e.target.closest('[data-kick]');
+        if (!kick) return;
+        e.preventDefault();
+        const target = state.currentRoom?.players.find(p => p.id === kick.dataset.kick);
+        confirmDialog({
+            title: '¿Expulsar a este jugador?',
+            message: `Expulsarás a ${target?.name ?? 'ese jugador'} de la sala de espera.`,
+            confirmText: 'Expulsar',
+            cancelText: 'Cancelar'
+        }).then(ok => {
+            if (ok) state.socket.emit('kickPlayer', { targetId: kick.dataset.kick });
+        });
     });
 
     $('metric-tabs').addEventListener('click', (e) => {

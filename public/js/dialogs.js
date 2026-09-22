@@ -1,4 +1,4 @@
-import { state, $, showView, hasOpenGame } from './state.js';
+import { state, $, showView, showError, hasOpenGame } from './state.js';
 import { stopTimer } from './builder.js';
 import { stopNextTimer, stopRestTimer } from './results.js';
 import { clearResume } from './identity.js';
@@ -107,6 +107,13 @@ export function leaveToLobby() {
     setPendingRoom(false);
     if (state.socket) state.socket.emit('leaveRoom');
     showView('lobby-view');
+}
+
+// Salida forzada al hall (expulsion, sala cerrada por inactividad...): igual
+// que leaveToLobby pero avisando del motivo en el mensaje de error del lobby.
+export function exitToLobby(msg) {
+    leaveToLobby();
+    if (msg) showError('lobby-error', msg);
 }
 
 // Entrar en una sala es una ida y vuelta con el servidor: hasta que

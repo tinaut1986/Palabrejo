@@ -73,11 +73,20 @@ export function updateWaitingRoom(roomState) {
         generateQRCode(joinUrl, $('qr-canvas'));
     }
 
-    // Players
+    // Players. El host ve un boton "Expulsar" junto a cada uno (issue #15):
+    // quien se duerme en la sala de espera ocupa plaza hasta el maximo de 12.
+    const myId = state.socket?.id;
     const playersHtml = roomState.players.map(p => `
         <div class="player-item">
-            <span class="player-name">${p.name}</span>
-            ${p.isHost ? '<span class="player-host">HOST</span>' : ''}
+            <span class="player-name">
+                ${p.name}${p.afkWarned ? '<span class="player-afk" title="Sin responder">⚠ sin responder</span>' : ''}
+            </span>
+            <span class="player-badges">
+                ${p.isHost ? '<span class="player-host">HOST</span>' : ''}
+                ${state.isHost && !p.isHost && p.id !== myId
+                    ? `<button class="btn-secondary btn-sm" data-kick="${p.id}">Expulsar</button>`
+                    : ''}
+            </span>
         </div>
     `).join('');
     $('waiting-players').innerHTML = playersHtml;
@@ -85,8 +94,12 @@ export function updateWaitingRoom(roomState) {
     // Host controls
     if (state.isHost) {
         $('host-controls').classList.remove('hidden');
+        $('become-host-controls').classList.add('hidden');
     } else {
         $('host-controls').classList.add('hidden');
+        // El anfitrion puede haber dejado la sala abierta o dormirse: quien no
+        // lo es tiene la opcion de pedir el rol.
+        $('become-host-controls').classList.remove('hidden');
     }
 }
 

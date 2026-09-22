@@ -305,6 +305,11 @@ registerSocketHandlers({
 
 // --- SERVER INIT ---
 let sweepInterval = null;
+let roomSweepInterval = null;
+
+// El mantenimiento de salas (issue #15) corre mas menudo que el barrido de
+// limitadores: detectar y sacar una sala waiting huerfana en 1 min en vez de 5.
+const ROOM_HEALTH_INTERVAL_MS = 60 * 1000;
 
 // Devuelve una promesa que resuelve cuando ya esta escuchando (no al
 // disparar el listen): los tests de integracion necesitan saber cuando el
@@ -335,6 +340,10 @@ async function startServer() {
         wordSubmitLimiter.sweep();
     }, 5 * 60 * 1000);
     sweepInterval.unref?.();
+
+    // Salud de salas: cierra waiting huerfanas y avisa a los durmientes.
+    roomSweepInterval = setInterval(() => game.sweepRooms(), ROOM_HEALTH_INTERVAL_MS);
+    roomSweepInterval.unref?.();
 }
 
 // Contrapartida de startServer para los tests de integracion (issue #8):
@@ -342,11 +351,13 @@ async function startServer() {
 // termine limpio, sin conexiones ni salas colgadas.
 async function stopServer() {
     if (sweepInterval) { clearInterval(sweepInterval); sweepInterval = null; }
+    if (roomSweepInterval) { clearInterval(roomSweepInterval); roomSweepInterval = null; }
     for (const roomCode of Object.keys(rooms)) {
         const room = rooms[roomCode];
         if (room.roundTimer) clearTimeout(room.roundTimer);
         if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
         if (room.restTimer) clearTimeout(room.restTimer);
+        if (room.hostRequestTimer) clearTimeout(room.hostRequestTimer);
         game.clearBonusTimers(room);
         delete rooms[roomCode];
     }
@@ -354,7 +365,7 @@ async function stopServer() {
     if (dbPool) await dbPool.end();
 }
 
-module.exports = { app, server, io, rooms, startServer, stopServer, validWordsCache, spawnBonus: game.spawnBonus };
+module.exports = { app, server, io, rooms, startServer, stopServer, validWordsCache, spawnBonus: game.spawnBonus, sweepRooms: game.sweepRooms };
 
 // En produccion (`node server.js`, o `CMD` del Dockerfile) arranca solo. Al
 // requerirse como modulo desde un test, quien lo requiere decide cuando

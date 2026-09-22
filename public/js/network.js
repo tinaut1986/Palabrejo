@@ -3,7 +3,21 @@ import { saveResume, readResume, clearResume, clearIdentity } from './identity.j
 import { startTimer, stopTimer, addWordChip, clearBuilt, markLatest, clearActiveBonus, showLetterBonus, renderMyWords, renderBuiltWord } from './builder.js';
 import { stopNextTimer, stopRestTimer, startRestCountdown, showRoundResults, showGameOver, updateScores, updateScorePills } from './results.js';
 import { updateWaitingRoom, updateRoomsList } from './lobby.js';
-import { setPendingRoom } from './dialogs.js';
+import { setPendingRoom, exitToLobby, confirmDialog } from './dialogs.js';
+
+// --- NOTICIAS DE SALA (issue #15) ---
+// Avisos cortos y efimeros (traspasos de host, expulsiones, avisos AFK). Se
+// muestran en la sala de espera; si estamos en plena partida, sobre la zona
+// de feedback para que no se pierdan.
+function showRoomNotice(text) {
+    const notice = $('room-notice');
+    if (notice) {
+        notice.textContent = text;
+        clearTimeout(notice._timer);
+        notice._timer = setTimeout(() => { if (notice) notice.textContent = ''; }, 8000);
+    }
+    if ($('game-view').classList.contains('active')) showFeedback(text, 'valid');
+}
 
 // --- SOCKET CONNECTION ---
 export function connectSocket() {
@@ -213,6 +227,44 @@ export function connectSocket() {
         stopNextTimer();
         showView('game-over-view');
         startRestCountdown(data.delay);
+    });
+
+    // --- SALUD DE SALAS (issue #15) ---
+    state.socket.on('roomNotice', (data) => {
+        showRoomNotice(data?.text);
+    });
+
+    // El host rechaza/aprueba, te avisan, un jugador dormido... Aviso AFK al
+    // propio durmiente: lleva un rato sin responder.
+    state.socket.on('afkWarning', () => {
+        const notice = $('room-notice');
+        if (notice) {
+            notice.textContent = 'Llevas un rato sin responder. ¡Sigue conectado o el anfitrión puede expulsarte!';
+            clearTimeout(notice._timer);
+            notice._timer = setTimeout(() => { if (notice) notice.textContent = ''; }, 8000);
+        }
+        vibrate([15, 40, 15]);
+    });
+
+    // El host esta en la sala (waiting) y alguien pide su rol: confirmar.
+    state.socket.on('becomeHostRequest', async (data) => {
+        const ok = await confirmDialog({
+            title: '¿Ceder el mando?',
+            message: `${data.requesterName} quiere convertirse en anfitrión de la sala. ¿Le pasas el rol?`,
+            confirmText: 'Ceder',
+            cancelText: 'Mantener'
+        });
+        state.socket.emit('respondHostRequest', { requestId: data.requestId, approve: ok });
+    });
+
+    // El host te ha expulsado de la sala de espera: fuera, con el motivo.
+    state.socket.on('kicked', (msg) => {
+        exitToLobby(msg || 'El anfitrión te ha expulsado de la sala.');
+    });
+
+    // El sweep cerro la sala waiting por inactividad del anfitrion.
+    state.socket.on('roomClosed', (msg) => {
+        exitToLobby(msg || 'La sala de espera se ha cerrado por inactividad.');
     });
 
     state.socket.on('publicRoomsList', (rooms) => {
