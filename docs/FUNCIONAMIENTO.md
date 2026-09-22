@@ -12,12 +12,22 @@ cambio es solo de UI/estética sin tocar lógica, no hace falta.
 
 ## Arquitectura
 
-- **Servidor autoritativo**: `server.js` valida todo (palabras, puntos,
-  identidad). El cliente (`public/js/main.js`) solo pinta y envía intención.
-- Estado de partidas **en memoria** (`rooms = {}` en `server.js`): no
-  sobrevive a un reinicio del contenedor (por diseño, spec de salud de salas
-  pendiente en issue #15 lo mitigará solo para salas huérfanas, no para
-  partidas en curso).
+- **Servidor autoritativo**: valida todo (palabras, puntos, identidad). El
+  cliente (`public/js/main.js`) solo pinta y envía intención.
+- `server.js` es el bootstrap: monta Express/Socket.IO, migraciones, rate
+  limit, y conecta los módulos de abajo. La lógica en sí vive en:
+  - `src/session.js` — sesiones firmadas e identidad de cuentas.
+  - `src/routes/{auth,profile,friends,leaderboard}.js` — rutas HTTP.
+  - `src/game/rooms.js` — ciclo de vida de sala/ronda/bonus (`createGameModule`).
+  - `src/socket/handlers.js` — registro de eventos de socket (`registerSocketHandlers`).
+  - Todos reciben sus dependencias por parámetro (`getDbPool()` como función,
+    no el pool directo: se crea después de las migraciones) en vez de cerrar
+    sobre variables globales — así son testeables sin arrancar todo el server.
+- Estado de partidas **en memoria** (`rooms = {}`, module-level en
+  `server.js`, pasado por referencia a `src/game/rooms.js`): no sobrevive a
+  un reinicio del contenedor (por diseño, spec de salud de salas pendiente
+  en issue #15 lo mitigará solo para salas huérfanas, no para partidas en
+  curso).
 - **Lógica pura y testeable** vive en `lib/game-logic.js` (puntuación,
   normalización de letras, bonus, selección de letras). Todo lo que se pueda
   testear sin sockets/DB va ahí.
