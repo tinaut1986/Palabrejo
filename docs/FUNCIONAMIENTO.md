@@ -37,7 +37,9 @@ cambio es solo de UI/estética sin tocar lógica, no hace falta.
 - `server.js` es el bootstrap: monta Express/Socket.IO, migraciones, rate
   limit, y conecta los módulos de abajo. La lógica en sí vive en:
   - `src/session.js` — sesiones firmadas e identidad de cuentas.
-  - `src/routes/{auth,profile,friends,leaderboard}.js` — rutas HTTP.
+  - `src/routes/{auth,profile,friends,leaderboard,qr}.js` — rutas HTTP (el
+  QR de invitación se genera en local con `qrcode`, sin API de terceros —
+  issue #4).
   - `src/game/rooms.js` — ciclo de vida de sala/ronda/bonus (`createGameModule`).
   - `src/socket/handlers.js` — registro de eventos de socket (`registerSocketHandlers`).
   - Todos reciben sus dependencias por parámetro (`getDbPool()` como función,
@@ -155,7 +157,9 @@ solo frena abuso trivial y scripts:
 
 - **HTTP `/api/*`**: máximo 40 peticiones/10s por IP (`req.ip`, con
   `trust proxy` activo porque el despliegue va detrás de Apache). Por
-  encima, `429`.
+  encima, `429`. Incluye `/api/qr` (issue #4): el generador de QRs del
+  contenedor está bajo el mismo límite para que no lo usen de servicio de
+  spam (el `data` además está acotado a 200 caracteres).
 - **Login**: tras 5 fallos por IP en 5 minutos, `429` aunque las
   credenciales sean correctas; se resetea al acertar o al caducar la
   ventana. Independiente del límite general de `/api/*`.

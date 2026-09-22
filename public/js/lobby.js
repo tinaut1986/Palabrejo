@@ -1,78 +1,32 @@
 import { state, $ } from './state.js';
 
-// --- QR CODE GENERATOR (minimal) ---
-export function generateQR(text, canvas, size = 150) {
-    const ctx = canvas.getContext('2d');
-    canvas.width = size;
-    canvas.height = size;
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = '#000000';
-
-    // Simple QR-like visual placeholder (real QR would need a library)
-    // We'll encode the URL as a visual pattern
-    const url = text;
-    const moduleCount = 21;
-    const cellSize = size / moduleCount;
-
-    // Use a deterministic pattern based on the URL
-    const data = [];
-    for (let i = 0; i < moduleCount * moduleCount; i++) {
-        const charCode = url.charCodeAt(i % url.length) || 0;
-        data.push((charCode + i * 7) % 3 === 0);
-    }
-
-    // Finder patterns
-    const drawFinder = (x, y) => {
-        for (let dy = 0; dy < 7; dy++) {
-            for (let dx = 0; dx < 7; dx++) {
-                const isEdge = dx === 0 || dx === 6 || dy === 0 || dy === 6;
-                const isInner = dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4;
-                if (isEdge || isInner) {
-                    ctx.fillRect((x + dx) * cellSize, (y + dy) * cellSize, cellSize, cellSize);
-                }
-            }
-        }
-    };
-
-    drawFinder(0, 0);
-    drawFinder(moduleCount - 7, 0);
-    drawFinder(0, moduleCount - 7);
-
-    // Fill data area
-    for (let y = 0; y < moduleCount; y++) {
-        for (let x = 0; x < moduleCount; x++) {
-            const inFinder = (x < 8 && y < 8) || (x >= moduleCount - 8 && y < 8) || (x < 8 && y >= moduleCount - 8);
-            if (!inFinder && data[y * moduleCount + x]) {
-                ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
-            }
-        }
-    }
-}
-
-// For a proper QR code, let's use a simple API fallback
-export function generateQRCode(text, canvas) {
+// --- QR DE INVITACION (issue #4) ---
+// El QR lo genera el propio servidor (GET /api/qr?data=...), que devuelve un
+// PNG con el mismo origen: la URL de la sala no sale ya a una API de terceros
+// y funciona con la red externa cortada. En fallo se deja el canvas sin
+// dibujar (sin fallback de texto: un QR invalido pintado es peor que nada).
+export async function generateQRCode(text, canvas) {
     const size = 150;
-    const ctx = canvas.getContext('2d');
-    canvas.width = size;
-    canvas.height = size;
+    let res;
+    try {
+        res = await fetch(`/api/qr?data=${encodeURIComponent(text)}`, { headers: { Accept: 'image/png' } });
+    } catch (e) {
+        return;
+    }
+    if (!res.ok) return;
 
-    // Use a QR code API for proper rendering
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
     const img = new Image();
-    img.crossOrigin = 'anonymous';
     img.onload = () => {
+        const ctx = canvas.getContext('2d');
+        canvas.width = size;
+        canvas.height = size;
         ctx.drawImage(img, 0, 0, size, size);
+        URL.revokeObjectURL(url);
     };
-    img.onerror = () => {
-        // Fallback: just show the text
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, size, size);
-        ctx.fillStyle = '#000000';
-        ctx.font = '12px Inter';
-        ctx.textAlign = 'center';
-        ctx.fillText(text, size / 2, size / 2);
-    };
-    img.src = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(text)}`;
+    img.onerror = () => URL.revokeObjectURL(url);
+    img.src = url;
 }
 
 // --- WAITING ROOM ---
