@@ -9,6 +9,10 @@ const { io: ioClient } = require('socket.io-client');
 process.env.PORT = process.env.PORT || '0';
 process.env.DB_NAME = process.env.DB_NAME || 'palabrejo_test_db';
 process.env.DB_HOST = process.env.DB_HOST || 'db';
+// Forzar HTTP: la suite habla por http:// (fetch + websocket). En una maquina
+// con certificados en /ssl/keys, sin este flag el server arrancaria HTTPS:3001
+// y ninguna prueba de integracion funcionaria (ver server.js).
+process.env.FORCE_HTTP = process.env.FORCE_HTTP || '1';
 
 async function bootTestServer() {
     // Cada test file requiere este helper en su propio registro de módulos

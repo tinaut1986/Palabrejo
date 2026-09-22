@@ -51,12 +51,17 @@ app.use('/api/', (req, res, next) => {
 });
 
 // --- SSL ---
+// Los tests de integracion necesitan HTTP simple y un puerto libre (PORT=0):
+// en una maquina que tenga certificados en /ssl/keys (como este server) sin
+// FORCE_HTTP el arranque se iria a HTTPS:3001 y romperia toda la suite.
+// En produccion nadie define FORCE_HTTP y el comportamiento no cambia.
+const forceHttp = process.env.FORCE_HTTP === '1';
 const sslKeyPath = '/ssl/keys/key.pem';
 const sslCertPath = '/ssl/keys/certs.pem';
 let server;
 let io;
 
-if (fs.existsSync(sslKeyPath) && fs.existsSync(sslCertPath)) {
+if (!forceHttp && fs.existsSync(sslKeyPath) && fs.existsSync(sslCertPath)) {
     try {
         const httpsOptions = {
             key: fs.readFileSync(sslKeyPath),

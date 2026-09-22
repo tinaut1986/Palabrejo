@@ -172,6 +172,7 @@ function registerSocketHandlers({
             room.gameState = 'playing';
             room.currentRound = 1;
             room.usedWords = {};
+            room.totalPlayable = 0;
             room.players.forEach(p => { p.score = 0; p.totalWordsFound = 0; });
 
             game.startRound(roomCode);

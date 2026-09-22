@@ -1,5 +1,5 @@
 const { bootTestServer, stopTestServer, connect, waitFor, emitAndWait, uniqueUsername } = require('./testServer');
-const { getPlayableWords } = require('../../lib/game-logic');
+const { getPlayableWords, normalizeForMatch } = require('../../lib/game-logic');
 
 jest.setTimeout(15000);
 
@@ -11,6 +11,13 @@ function pickWord(server, roomCode, { minLength = 3 } = {}) {
     const words = getPlayableWords(letters, { validWordsCache: server.validWordsCache, minLength });
     if (!words.length) throw new Error('sin palabras jugables en este tablero (no deberia pasar)');
     return words.sort((a, b) => b.length - a.length)[0];
+}
+
+// Total de jugables de la ronda actual tal y como el server debe calcularlo:
+// formas canonicas unicas de las palabras jugables de las letras del tablero.
+function expectedPlayableCount(server, roomCode) {
+    const letters = server.rooms[roomCode].currentLetters;
+    return new Set(getPlayableWords(letters, { validWordsCache: server.validWordsCache }).map(w => normalizeForMatch(w))).size;
 }
 
 async function createAndStart(server, { totalRounds = 1, gameMode = 'normal' } = {}) {
@@ -68,6 +75,42 @@ describe('partida completa', () => {
         const [roundEnd, gameOver] = await emitAndWait(host, 'endRoundManual', undefined, ['roundEnd', 'gameOver']);
         expect(roundEnd.results[0].scoreThisRound).toBe(result.points);
         expect(gameOver.winner.score).toBe(result.points);
+
+        // Issue #2: roundEnd lleva el progreso "X de Y" y gameOver el agregado
+        expect(roundEnd.playableCount).toBe(expectedPlayableCount(server, roomCode));
+        expect(roundEnd.playableCount).toBeGreaterThan(0);
+        expect(roundEnd.results[0].foundCount).toBe(1);
+        expect(roundEnd.results[0].wordsThisRound).toHaveLength(1);
+        expect(gameOver.playableCount).toBe(roundEnd.playableCount);
+        expect(gameOver.players[0].foundCount).toBe(1);
+
+        host.disconnect();
+    });
+
+    test('progreso agregado: playableCount suma las jugables de cada ronda', async () => {
+        const host = await connect(server.baseUrl);
+        const [{ roomCode }] = await emitAndWait(
+            host, 'createRoom',
+            { playerName: uniqueUsername('host'), isPublic: false, totalRounds: 2, bonusesEnabled: false },
+            ['playerToken', 'roomStateUpdate']
+        );
+        await emitAndWait(host, 'startGame', undefined, 'roundStart');
+
+        await emitAndWait(host, 'submitWord', { word: pickWord(server, roomCode) }, 'wordResult');
+        const roundEnd1 = await emitAndWait(host, 'endRoundManual', undefined, 'roundEnd');
+        const expected1 = expectedPlayableCount(server, roomCode);
+        expect(roundEnd1.playableCount).toBe(expected1);
+
+        // La ronda 2 arranca sola tras el descanso de 5s: esperarla en vez de
+        // dormir (waitFor admite tiempo extra, la cuenta son 5s exactos).
+        await waitFor(host, 'roundStart', 7000);
+
+        await emitAndWait(host, 'submitWord', { word: pickWord(server, roomCode) }, 'wordResult');
+        const [roundEnd2, gameOver] = await emitAndWait(host, 'endRoundManual', undefined, ['roundEnd', 'gameOver']);
+
+        expect(roundEnd2.playableCount).toBeGreaterThan(0);
+        expect(gameOver.playableCount).toBe(expected1 + roundEnd2.playableCount);
+        expect(gameOver.players[0].foundCount).toBe(2);
 
         host.disconnect();
     });

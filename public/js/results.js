@@ -71,6 +71,7 @@ export function showRoundResults(data) {
                     ${i === 0 ? '👑 ' : ''}${p.name}
                 </span>
                 <span class="result-score">${p.totalScore} pts <small class="result-round">(+${p.scoreThisRound || 0} esta ronda)</small></span>
+                ${progressMarkup(p.foundCount, isMe, data.playableCount)}
                 <div class="result-words">
                     ${shown.length > 0
                         ? shown.map(w => `<span class="word-chip valid" style="display:inline-block;margin:2px;font-size:0.75rem;">${w}</span>`).join('')
@@ -85,6 +86,33 @@ export function showRoundResults(data) {
     $('round-missed-words').innerHTML = '';
 
     startNextCountdown();
+}
+
+// "Encontraste X de Y palabras (Z%)": el dato cuantitativo de la ronda (issue
+// #2). Para uno mismo un anillo de progreso; para los demas solo texto, sin
+// chillar (criterio de aceptacion). En el fin de partida se usa el mismo
+// marcado sin anillo: el resumen es agregado, no compite por la atencion.
+function progressMarkup(foundCount, isMe, playableCount) {
+    const total = Number(playableCount) || 0;
+    if (total <= 0) return '';
+    const found = Number(foundCount) || 0;
+    const pct = Math.min(100, Math.round((found / total) * 100));
+    if (!isMe) {
+        return `<div class="result-progress">${found} de ${total} palabras · ${pct}%</div>`;
+    }
+    return `
+        <div class="result-progress me">
+            <span class="ring-wrap" role="img" aria-label="${pct} por ciento de las palabras">
+                <svg viewBox="0 0 36 36" class="ring">
+                    <circle class="ring-track" cx="18" cy="18" r="15.9155"></circle>
+                    <circle class="ring-fill${found >= total ? ' full' : ''}" cx="18" cy="18" r="15.9155"
+                        stroke-dasharray="${pct} ${100 - pct}" stroke-dashoffset="25"></circle>
+                </svg>
+                <span class="ring-label">${pct}%</span>
+            </span>
+            <span>Has formado ${found} de ${total} palabras (${pct}%)</span>
+        </div>
+    `;
 }
 
 // Las palabras mas largas de la ronda, con quien las encontro
@@ -116,6 +144,7 @@ export function showGameOver(data) {
                 ${i === 0 ? '<span class="winner-badge">CAMPEÓN</span>' : ''}
             </span>
             <span class="result-score">${p.score} pts</span>
+            ${progressMarkup(p.foundCount, false, data.playableCount)}
             <div class="result-words">
                 ${shown.map(w => `<span class="word-chip valid" style="display:inline-block;margin:2px;font-size:0.75rem;">${w}</span>`).join('')}
                 ${extra > 0 ? `<span class="word-chip-more">+${extra} más</span>` : ''}

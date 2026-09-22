@@ -131,10 +131,20 @@ Configurable por sala (`room.bonusesEnabled`, opción al crear sala).
   hasta 8 palabras reales del diccionario que cabían en ese tablero y no
   encontró (`getPlayableWords` menos lo que encontró, ordenado por
   longitud).
+- **Progreso de ronda (issue #2)**: `roundEnd` lleva `playableCount` (las
+  palabras jugables de ese tablero, contadas por forma canónica única para
+  cuadrar con cómo el server decide duplicados) y cada resultado su
+  `foundCount`. El cliente muestra "Has formado X de Y (Z%)" para uno mismo
+  (con anillo de progreso) y "X de Y · Z%" como texto plano para los demás.
+  El `playableCount` de la ronda sale del **mismo** `getPlayableWords` que ya
+  se usaba para los "faltantes", sin recorrer dos veces el diccionario.
 - **Fin de partida** (`gameOver`): mismo patrón pero acumulado a toda la
   partida — top personal de tus más largas, las más repetidas
   (encontradas por varios jugadores o en varias rondas) y las más largas
-  de toda la partida. Sin "faltantes": no tiene sentido a nivel de partida
+  de toda la partida. `gameOver` incluye `playableCount` agregado (la suma
+  del `playableCount` de cada ronda, se acumula en `room.totalPlayable`) y
+  por jugador `foundCount` (`totalWordsFound`), para el "X de Y" de toda la
+  partida. Sin "faltantes": no tiene sentido a nivel de partida
   completa (el diccionario jugable cambia cada ronda).
 
 ## Rate-limit y throttling
@@ -188,6 +198,12 @@ solo frena abuso trivial y scripts:
 - `npm test` corre las dos suites en un mismo comando. Necesitan una
   MariaDB accesible (`DB_HOST`, publicado en `3306` si se corre desde fuera
   del contenedor) — no se mockea la base de datos.
+- Las pruebas de integración hablan con el server por `http://` (fetch +
+  websockets). Si la máquina donde se ejecutan tiene certificados en
+  `/ssl/keys`, el server intentaría arrancar en `https://:3001` y toda la
+  suite fallaría en cascada: `testServer.js` fuerza HTTP con
+  `FORCE_HTTP=1` (ver `server.js`). En los contenedores de despliegue no
+  hace falta tocar nada, el flag no existe en producción.
 - La imagen de producción no lleva ni tests ni `devDependencies`
   (`jest`, `socket.io-client`): hay `.dockerignore` para que `COPY . .` en
   el `Dockerfile` no arrastre un `node_modules` de desarrollo del host.

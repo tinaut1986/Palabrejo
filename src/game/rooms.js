@@ -254,7 +254,8 @@ function createGameModule({ io, rooms, getDbPool, gameLogic }) {
             name: p.name,
             wordsThisRound: Array.from(p.wordsThisRound),
             scoreThisRound: Array.from(p.wordsThisRound).reduce((sum, w) => sum + (p.wordPoints?.[w] ?? calculateScore(w, room.currentLetters)), 0),
-            totalScore: p.score
+            totalScore: p.score,
+            foundCount: p.wordsThisRound.size
         }));
 
         // Las palabras mas largas de la ronda, encontradas por quien sea: un
@@ -270,16 +271,25 @@ function createGameModule({ io, rooms, getDbPool, gameLogic }) {
             .sort((a, b) => b.word.length - a.word.length || a.word.localeCompare(b.word))
             .slice(0, 5);
 
+        // Total de palabras jugables de este tablero. Se saca del MISMO
+        // recorrido de getPlayableWords (sin una segunda pasada por las ~108k
+        // entradas del diccionario) contando la forma canonica unica: asi
+        // coincide con lo que el server considera jugable para desempatar
+        // duplicados ("canto"/"cantó" son la misma palabra para el jugador).
+        const playable = getPlayableWords(room.currentLetters, { validWordsCache });
+        const playableCount = new Set(playable.map(w => normalizeForMatch(w))).size;
+        room.totalPlayable = (room.totalPlayable || 0) + playableCount;
+
         io.to(roomCode).emit('roundEnd', {
             round: room.currentRound,
             results: roundResults,
             letters: room.currentLetters,
-            topWords
+            topWords,
+            playableCount
         });
 
         // Las que se le escaparon a cada uno: personal, solo para quien no las
         // encontro (no tiene gracia que el resto vea lo que a ti te faltó).
-        const playable = getPlayableWords(room.currentLetters, { validWordsCache });
         room.players.forEach(p => {
             const missed = playable
                 .filter(w => !p.wordsThisRound.has(normalizeForMatch(w)))
@@ -332,8 +342,12 @@ function createGameModule({ io, rooms, getDbPool, gameLogic }) {
                 id: p.id,
                 name: p.name,
                 score: p.score,
-                wordsFound: p.wordsFound
+                wordsFound: p.wordsFound,
+                foundCount: p.totalWordsFound
             })),
+            // Progreso agregado de toda la partida: suma de las jugables de
+            // cada ronda, contra las palabras (en total) que encontro cada uno.
+            playableCount: room.totalPlayable || 0,
             mostFound,
             longestWords
         });
@@ -405,6 +419,7 @@ function createGameModule({ io, rooms, getDbPool, gameLogic }) {
         room.gameState = 'playing';
         room.currentRound = 1;
         room.usedWords = {};
+        room.totalPlayable = 0;
         room.players.forEach(p => {
             p.score = 0;
             p.totalWordsFound = 0;

@@ -924,6 +924,55 @@ button.letter-tile:active { transform: scale(0.92); }
     margin-left: 8px;
 }
 
+/* Progreso "X de Y palabras" (issue #2): anillo solo para uno mismo, el
+   resto lo ve como texto para no robar protagonismo */
+.result-progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    margin-top: 6px;
+}
+.result-progress.me {
+    color: var(--text);
+    font-weight: 600;
+}
+.ring-wrap {
+    position: relative;
+    width: 34px;
+    height: 34px;
+    flex: none;
+}
+.ring-wrap .ring {
+    width: 34px;
+    height: 34px;
+    transform: rotate(-90deg);
+}
+.ring-track {
+    fill: none;
+    stroke: var(--border);
+    stroke-width: 3;
+}
+.ring-fill {
+    fill: none;
+    stroke: var(--accent-hover);
+    stroke-width: 3;
+    stroke-linecap: round;
+    transition: stroke-dasharray 0.4s ease;
+}
+.ring-fill.full { stroke: var(--green); }
+.ring-label {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.62rem;
+    font-weight: 700;
+    color: var(--text);
+}
+
 /* Profile */
 .profile-body {
     text-align: left;
