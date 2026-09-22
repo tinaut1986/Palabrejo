@@ -115,4 +115,5 @@ no hace falta tocarlo.
 - El servidor es *single process* y guarda las salas en memoria: al reiniciar
   el contenedor se pierden las partidas en curso (por diseño).
 - No introduzcas dependencias externas (APIs, CDNs) en el cliente sin
-  justificarlo: hay issues para quitarlas (QR #4, fuentes #5).
+  justificarlo: sigue en deuda quitar las fuentes de Google (issue #5). El
+  QR ya es local (issue #4, `src/routes/qr.js`).

@@ -209,11 +209,13 @@ const { registerAuthRoutes } = require('./src/routes/auth');
 const { registerProfileRoutes } = require('./src/routes/profile');
 const { registerFriendsRoutes } = require('./src/routes/friends');
 const { registerLeaderboardRoutes } = require('./src/routes/leaderboard');
+const { registerQrRoutes } = require('./src/routes/qr');
 
 registerAuthRoutes(app, { getDbPool: () => dbPool, bcrypt, signSession, verifySession, isNameRegistered, loginFailLimiter, LOGIN_FAIL_LIMIT });
 registerProfileRoutes(app, { getDbPool: () => dbPool });
 registerFriendsRoutes(app, { getDbPool: () => dbPool, verifySession });
 registerLeaderboardRoutes(app, { getDbPool: () => dbPool });
+registerQrRoutes(app);
 
 // --- WRAPPERS (certifican el diccionario en memoria) ---
 // generateLetters, normalizeForMatch y calculateScore se usan tal cual desde

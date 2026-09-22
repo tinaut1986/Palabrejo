@@ -23,6 +23,7 @@
     "bcryptjs": "^2.4.3",
     "express": "^5.1.0",
     "mysql2": "^3.14.3",
+    "qrcode": "^1.5.4",
     "socket.io": "^4.8.1"
   },
   "devDependencies": {
